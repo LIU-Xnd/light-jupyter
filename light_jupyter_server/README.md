@@ -30,7 +30,7 @@ The tunnel is described in
 ## Run
 
 ```bash
-python3 -m pip install -e "light-jupyter @ git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
 python3 -m light_jupyter        # or just: light-jupyter
 ```
 

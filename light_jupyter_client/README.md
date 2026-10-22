@@ -30,12 +30,24 @@ to use it as well.
 
 ## Install
 
-On Windows, no dependencies — the standard library only:
+On Windows, from GitHub (editable — a clone lands in `src/`, so `git pull`
+inside it updates the install). No dependencies beyond the standard library:
 
 ```powershell
-cd path\to\light_jupyter_client
+python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter_client"
+```
+
+> The `&egg=` fragment is required: pip cannot infer a project name from a
+> bare `#subdirectory` URL, and rejects the `name @ url` form outright when
+> `-e` is used.
+
+Or from a clone you already have:
+
+```powershell
+git clone https://github.com/LIU-Xnd/light-jupyter.git
+cd light-jupyter\light_jupyter_client
 python -m pip install -e .
-# or just run it in place
+# or just run it in place, no install at all
 python -m light_jupyter_client
 ```
 
