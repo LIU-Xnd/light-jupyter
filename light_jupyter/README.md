@@ -46,7 +46,11 @@ Every flag is optional; they exist for when you need to override a default.
 | `--regen-token` | discard the stored token and mint a new one |
 | `--show-token` | print the token and exit |
 | `--user` | shell user (default: current user) |
+| `--trust-proxy` | honour `X-Forwarded-For` when rate limiting |
+| `--throttle-threshold` | failed token attempts before backoff (default 5) |
 | `--print-only` | print the URL and exit |
+| `--enjoy` | also start a **managed sshd** that lives and dies with light_jupyter, and print copy-paste setup for Windows/Linux/macOS |
+| `--enjoy-port` | port to advertise for that sshd (default: auto-picked) |
 
 ### Token
 
@@ -86,6 +90,35 @@ A port taken in between still reports cleanly:
 cannot bind 0.0.0.0:20410 (Address already in use).  Another light_jupyter
 may already be running; stop it or leave --port empty for auto.
 ```
+
+## --enjoy: sshd that lives and dies with light_jupyter
+
+    python -m light_jupyter --enjoy
+
+Starts the web IDE *and* a dedicated sshd instance, then prints copy-paste
+blocks for Windows (PowerShell), Linux and macOS that save the private key
+to the local `~/.ssh/id_light_jupyter` (read-only) and add a commented
+`Host light_jupyter` block to the local ssh config — so `ssh light_jupyter`
+just works. When you stop light_jupyter (ctrl-c / SIGTERM), the sshd dies
+with it.
+
+The system sshd is never touched: no `/etc/ssh/sshd_config` edits, no
+reloads. The managed instance is a child process with its own port, host key
+and config. Everything it creates carries a `_light_jupyter` suffix so it
+cannot collide with existing files:
+
+| file | purpose |
+|---|---|
+| `~/.ssh/id_light_jupyter` (+`.pub`) | the login keypair (ed25519) |
+| `~/.ssh/authorized_keys_light_jupyter` | the public key; the standard `authorized_keys` is never read or written |
+| `~/.light_jupyter/sshd_config_light_jupyter` | the managed sshd's own config |
+| `~/.light_jupyter/id_light_jupyter_host_ed25519` | its host key |
+| `~/.light_jupyter/sshd_light_jupyter.pid` / `.log` | pid and log of the instance |
+
+Key-only logins (`PasswordAuthentication no`). A leftover instance from a
+crashed run is detected via the pidfile and cleaned up on the next start.
+`--enjoy-port` overrides the advertised port; by default it is auto-picked
+the same way as `--port`.
 
 ## Self-test
 

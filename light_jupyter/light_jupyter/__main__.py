@@ -53,6 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: 5)")
     p.add_argument("--print-only", action="store_true",
                    help="print the URL and exit without listening")
+    p.add_argument("--enjoy", action="store_true",
+                   help="set up sshd + a dedicated _light_jupyter key and "
+                        "print copy-paste setup for Windows/Linux/macOS, "
+                        "then exit")
+    p.add_argument("--enjoy-port", type=int, default=None, metavar="PORT",
+                   help="port to advertise for ssh in the --enjoy output "
+                        "(default: 22, or the port sshd listens on)")
     return p
 
 
@@ -149,8 +156,19 @@ def local_ipv4() -> str:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
-    token, token_note, _created = resolve_token(args)
     user = args.user or getpass.getuser()
+
+    # --enjoy brings up a managed sshd that lives exactly as long as this
+    # process: started below, killed in _stop() (ctrl-c / SIGTERM).
+    enjoy_handle = None
+    if args.enjoy:
+        from .enjoy import prepare as enjoy_prepare
+        adv_host = args.host if args.host not in ("0.0.0.0", "", None) \
+            else local_ipv4()
+        enjoy_handle = enjoy_prepare(adv_host, user,
+                                     advertise_port=args.enjoy_port)
+
+    token, token_note, _created = resolve_token(args)
     root = os.path.abspath(os.path.expanduser(args.root)) if args.root \
         else default_root(user)
 
@@ -194,7 +212,12 @@ def main(argv=None) -> int:
     ]
     print("\n".join(banner), flush=True)
 
+    if enjoy_handle is not None:
+        enjoy_handle.print_setup(host, user)
+
     if args.print_only:
+        if enjoy_handle is not None:
+            enjoy_handle.stop()
         return 0
 
     import tornado.ioloop
@@ -233,10 +256,16 @@ def main(argv=None) -> int:
         print("\nshutting down", flush=True)
         for s in list(app.sessions.values()):
             s.close()
+        if enjoy_handle is not None:
+            enjoy_handle.stop()          # the managed sshd dies with lj
         loop.add_callback(loop.stop)
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+
+    import atexit
+    if enjoy_handle is not None:
+        atexit.register(enjoy_handle.stop)   # belt and braces
 
     loop.start()
     return 0

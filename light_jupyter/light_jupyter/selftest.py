@@ -426,6 +426,101 @@ def main() -> int:
     loop.add_callback(loop.stop)
 
     print()
+    print("=== 9. enjoy (managed sshd + keys, sandboxed in a tmpdir) ===")
+    import base64 as _b64
+    import tempfile as _tf2
+    from pathlib import Path as _P
+    from .enjoy import (AUTH_NAME, CONF_NAME, KEY_NAME, config_block,
+                        ensure_authorized_keys, ensure_keypair,
+                        parse_ss_listeners, render_posix, render_windows,
+                        find_binary, sshd_config_text)
+
+    sample_ss = ("State  Recv-Q Send-Q Local Address:Port  Peer Address:Port\n"
+                 "LISTEN 0      128    0.0.0.0:22         0.0.0.0:*\n"
+                 "LISTEN 0      128       [::]:22            [::]:*\n"
+                 "LISTEN 0      128    127.0.0.1:631      0.0.0.0:*\n"
+                 "LISTEN 0      128    0.0.0.0:8888       0.0.0.0:*\n")
+    got = parse_ss_listeners(sample_ss)
+    check("enjoy: parse_ss_listeners finds wildcard listeners only",
+          got == [22, 8888], str(got))
+
+    check("enjoy: finds sshd binary", find_binary("sshd") is not None,
+          str(find_binary("sshd")))
+    check("enjoy: finds ssh-keygen binary", find_binary("ssh-keygen") is not None,
+          str(find_binary("ssh-keygen")))
+
+    tmp_home = _P(_tf2.mkdtemp(prefix="lj_enjoy_"))
+    fake_keygen = find_binary("ssh-keygen")
+    priv, pub, _note = ensure_keypair(fake_keygen, tmp_home / ".ssh" / KEY_NAME)
+    check("enjoy: keypair generated with the suffixed name",
+          (tmp_home / ".ssh" / KEY_NAME).exists()
+          and (tmp_home / ".ssh" / (KEY_NAME + ".pub")).exists(), KEY_NAME)
+    check("enjoy: keypair is ed25519 (openssh format)",
+          priv.startswith("-----BEGIN OPENSSH PRIVATE KEY-----"), priv[:31])
+    priv2, pub2, note2 = ensure_keypair(fake_keygen, tmp_home / ".ssh" / KEY_NAME)
+    check("enjoy: keypair is reused, not regenerated",
+          priv2 == priv and pub2 == pub and "reused" in note2, note2)
+
+    added1 = ensure_authorized_keys(tmp_home, pub)
+    check("enjoy: first append writes the suffixed authorized_keys",
+          added1 is True
+          and (tmp_home / ".ssh" / AUTH_NAME).exists(), AUTH_NAME)
+    added2 = ensure_authorized_keys(tmp_home, pub)
+    check("enjoy: second append is a no-op", added2 is False)
+    ak = (tmp_home / ".ssh" / AUTH_NAME).read_text()
+    check("enjoy: authorized_keys has exactly one line",
+          len(ak.strip().splitlines()) == 1, ak)
+    mode = os.stat(tmp_home / ".ssh" / AUTH_NAME).st_mode & 0o777
+    check("enjoy: authorized_keys mode is 0600", mode == 0o600, oct(mode))
+
+    cb = config_block("192.0.2.10", 22, "me")
+    check("enjoy: config block has host/user/port/identity",
+          all(s in cb for s in ("Host light_jupyter", "HostName 192.0.2.10",
+                                "Port 22", "User me",
+                                f"IdentityFile ~/.ssh/{KEY_NAME}")), cb)
+    check("enjoy: config block carries an explanatory comment",
+          "--enjoy" in cb and "light_jupyter" in cb.splitlines()[0], cb)
+    check("enjoy: config block is delimited",
+          cb.startswith("# ---") and cb.rstrip().endswith(
+              "# --- end light_jupyter ---"), cb.splitlines()[0])
+
+    cfg = sshd_config_text(20410, _P("/home/u"),
+                           "/usr/lib/openssh/sftp-server")
+    check("enjoy: managed sshd config pins port + own host key",
+          "Port 20410" in cfg
+          and "/home/u/.light_jupyter/id_light_jupyter_host_ed25519" in cfg,
+          cfg.splitlines()[1])
+    check("enjoy: managed sshd reads only the suffixed authorized_keys",
+          "AuthorizedKeysFile .ssh/authorized_keys_light_jupyter" in cfg
+          and " authorized_keys " not in cfg, "AuthorizedKeysFile line wrong")
+    check("enjoy: managed sshd is key-only",
+          "PasswordAuthentication no" in cfg
+          and "PubkeyAuthentication yes" in cfg, "auth methods wrong")
+    check("enjoy: managed sshd pid/log files are suffixed",
+          "sshd_light_jupyter.pid" in cfg, "missing pidfile")
+    cfg_nosftp = sshd_config_text(1, _P("/home/u"), None)
+    check("enjoy: sftp subsystem omitted when the binary is absent",
+          "Subsystem" not in cfg_nosftp, "stale sftp line")
+
+    win = render_windows("192.0.2.10", 22, "me", priv)
+    check("enjoy: windows block writes via FromBase64String",
+          "FromBase64String(" in win, "missing b64 writer")
+    check("enjoy: windows block locks the key down with icacls",
+          "icacls" in win and ":R\"" in win, "missing icacls")
+    m = [l for l in win.splitlines() if "FromBase64String" in l][0]
+    b64txt = m.split('"')[3]
+    check("enjoy: windows b64 payload decodes to the private key",
+          _b64.b64decode(b64txt).decode() == priv, "payload mismatch")
+    check("enjoy: windows block guards the config append",
+          "Select-String" in win, "missing guard")
+
+    posix = render_posix("192.0.2.10", 22, "me", priv)
+    check("enjoy: posix block uses a quoted heredoc + chmod 600",
+          "<<'LJEOF'" in posix and "chmod 600" in posix, "missing heredoc")
+    check("enjoy: posix block guards the config append",
+          "grep -q 'Host light_jupyter'" in posix, "missing guard")
+
+    print()
     print("=" * 60)
     n_pass = sum(1 for r in results if r[0] == PASS)
     n_fail = sum(1 for r in results if r[0] == FAIL)
