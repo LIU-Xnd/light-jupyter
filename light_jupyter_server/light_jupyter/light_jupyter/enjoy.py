@@ -1,0 +1,412 @@
+"""``--enjoy``: give the box an sshd that lives and dies with light_jupyter.
+
+A dedicated sshd instance is started when light_jupyter starts (``--enjoy``)
+and killed when light_jupyter exits (ctrl-c / SIGTERM). It is a child process
+with its own port, host key and config -- the system sshd is never touched:
+no /etc/ssh/sshd_config edits, no reloads, nothing.
+
+Everything this feature creates uses a ``_light_jupyter`` suffix so it can
+never collide with files that already exist on the machine:
+
+  server side
+  ------------------------------------------------
+  ~/.ssh/id_light_jupyter                         user keypair (ed25519)
+  ~/.ssh/id_light_jupyter.pub
+  ~/.ssh/authorized_keys_light_jupyter            never touches authorized_keys
+  ~/.light_jupyter/sshd_config_light_jupyter      managed sshd's own config
+  ~/.light_jupyter/id_light_jupyter_host_ed25519  its own host key
+  ~/.light_jupyter/sshd_light_jupyter.pid         pid of the managed instance
+  ~/.light_jupyter/sshd_light_jupyter.log
+
+  local machine (via the copy-paste blocks)
+  ------------------------------------------------
+  ~/.ssh/id_light_jupyter                         the private key, chmod 600
+  ~/.ssh/config                                   a commented Host block
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
+from typing import Optional
+
+KEY_NAME = "id_light_jupyter"
+AUTH_NAME = "authorized_keys_light_jupyter"
+STATE_DIR = ".light_jupyter"
+HOST_KEY_NAME = "id_light_jupyter_host_ed25519"
+CONF_NAME = "sshd_config_light_jupyter"
+PID_NAME = "sshd_light_jupyter.pid"
+LOG_NAME = "sshd_light_jupyter.log"
+MARKER = "light_jupyter"
+
+
+# ---------- discovery ----------
+
+def find_binary(name: str) -> Optional[str]:
+    """Locate sbin-dwelling binaries that a plain PATH lookup misses."""
+    from shutil import which
+    hit = which(name)
+    if hit:
+        return hit
+    for d in ("/usr/sbin", "/usr/local/sbin"):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def parse_ss_listeners(text: str) -> list:
+    """Wildcard (0.0.0.0 / [::] / *) listening ports from `ss -tln` output.
+
+    Loopback-only listeners are skipped: they can never be reached from
+    another machine, which is the whole point here.
+    """
+    ports = []
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        if len(f) < 4:
+            continue
+        addr = f[3]
+        if not addr.startswith(("0.0.0.0:", "[::]:", "*:")):
+            continue
+        p = addr.rsplit(":", 1)[-1]
+        if p.isdigit():
+            ports.append(int(p))
+    return sorted(set(ports))
+
+
+# ---------- keys ----------
+
+def ensure_keypair(keygen: str, key_path: Path):
+    """Return (priv_text, pub_text, note); create the pair only once."""
+    key_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    pub_path = key_path.with_suffix(key_path.suffix + ".pub")
+    if key_path.exists() and pub_path.exists():
+        return (key_path.read_text(), pub_path.read_text(),
+                f"reused existing {key_path}")
+    if key_path.exists():
+        pub = subprocess.run([keygen, "-y", "-f", str(key_path)],
+                             capture_output=True, text=True)
+        if pub.returncode == 0 and pub.stdout.strip():
+            return (key_path.read_text(), pub.stdout,
+                    f"reused {key_path}, regenerated its .pub")
+    r = subprocess.run([keygen, "-t", "ed25519", "-N", "",
+                        "-C", MARKER, "-f", str(key_path)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"ssh-keygen failed: {r.stderr.strip()}")
+    return (key_path.read_text(), pub_path.read_text(),
+            f"generated {key_path} (ed25519, no passphrase)")
+
+
+def ensure_authorized_keys(home: Path, pub_text: str) -> bool:
+    """Append the pubkey to <home>/.ssh/authorized_keys_light_jupyter.
+
+    Returns True when the line was added now, False when it was already
+    there. Creates the file (0600) and the .ssh dir (0700) as needed. The
+    standard authorized_keys is never read or written.
+    """
+    ssh_dir = home / ".ssh"
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    try:
+        os.chmod(ssh_dir, 0o700)
+    except OSError:
+        pass
+    ak = ssh_dir / AUTH_NAME
+    line = pub_text.strip()
+    if ak.exists() and line in ak.read_text().splitlines():
+        return False
+    with open(ak, "a") as f:
+        f.write(line + "\n")
+    os.chmod(ak, 0o600)
+    return True
+
+
+# ---------- the managed sshd ----------
+
+def sshd_config_text(port: int, home: Path, sftp_server: Optional[str]) -> str:
+    """Config for the managed instance. Key-only logins, own key files."""
+    sd = home / STATE_DIR
+    lines = [
+        "# generated by light_jupyter --enjoy; safe to delete",
+        f"Port {port}",
+        "ListenAddress 0.0.0.0",
+        f"HostKey {sd / HOST_KEY_NAME}",
+        f"PidFile {sd / PID_NAME}",
+        f"AuthorizedKeysFile .ssh/{AUTH_NAME}",
+        "PubkeyAuthentication yes",
+        "PasswordAuthentication no",
+        "ChallengeResponseAuthentication no",
+        "UsePAM no",
+        "X11Forwarding no",
+        "PrintMotd no",
+        "LogLevel INFO",
+    ]
+    if sftp_server:
+        lines.append(f"Subsystem sftp {sftp_server}")
+    return "\n".join(lines) + "\n"
+
+
+def _stop_stale_instance(state_dir: Path):
+    """Kill a managed sshd left over from a previous (crashed?) run."""
+    pid_file = state_dir / PID_NAME
+    if not pid_file.exists():
+        return
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.3)
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        pid_file.unlink()
+    except OSError:
+        pass
+
+
+class ManagedSshd:
+    """A child sshd process that dies with light_jupyter."""
+
+    def __init__(self, proc: subprocess.Popen, port: int):
+        self.proc = proc
+        self.port = port
+
+    def stop(self):
+        """Terminate the managed sshd. Called from lj's ctrl-c handler, so
+        bounded: TERM, one second to exit, then KILL. sshd's master exits
+        promptly on TERM."""
+        if self.proc.poll() is not None:
+            return
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        except OSError:
+            pass
+
+    def payload(self, ip: str, user: str) -> dict:
+        """Everything the web UI needs to finish the local side."""
+        return build_payload(ip, user, self.port, Path.home())
+
+    def print_setup(self, ip: str, user: str):
+        priv = (Path.home() / ".ssh" / KEY_NAME).read_text()
+        print()
+        print(f"  --enjoy: managed sshd listening on port {self.port} "
+              "(dies with light_jupyter)")
+        print(f"    login: ssh {user}@{ip} -p {self.port}")
+        print()
+        print("  On Windows -- open PowerShell, copy and paste:")
+        print("  " + "-" * 66)
+        print(render_windows(ip, self.port, user, priv))
+        print("  " + "-" * 66)
+        print()
+        print("  On Linux or macOS -- open a terminal, copy and paste:")
+        print("  " + "-" * 66)
+        print(render_posix(ip, self.port, user, priv))
+        print("  " + "-" * 66)
+        print()
+        print(f"  Then: ssh {MARKER}")
+
+
+def build_payload(ip: str, user: str, port: int, home: Path) -> dict:
+    """Assemble the JSON body for POST /api/enjoy (and for tests)."""
+    priv = (home / ".ssh" / KEY_NAME).read_text()
+    return {
+        "host": ip,
+        "port": port,
+        "user": user,
+        "key_name": KEY_NAME,
+        "key_b64": base64.b64encode(priv.encode()).decode(),
+        "config_block": config_block(ip, port, user),
+        "win_cmd": render_windows(ip, port, user, priv),
+        "posix_cmd": render_posix(ip, port, user, priv),
+        "hint": f"ssh {MARKER}",
+    }
+
+
+# One handle per process: --enjoy at startup and POST /api/enjoy share it,
+# so clicking the button never starts a second sshd.
+_current: Optional[ManagedSshd] = None
+
+
+def get_current() -> Optional[ManagedSshd]:
+    return _current
+
+
+def get_or_start(advertise_port: Optional[int] = None) -> ManagedSshd:
+    """Return the running managed sshd, starting it if needed."""
+    global _current
+    if _current is not None and _current.proc.poll() is None:
+        return _current
+    _current = prepare(advertise_port=advertise_port)
+    return _current
+
+
+def stop_and_clean(home: Optional[Path] = None) -> list:
+    """Stop Enjoying: kill the managed sshd and remove everything it made.
+
+    Server side this is a true undo: the sshd port closes and every
+    ``_light_jupyter``-suffixed file is deleted. Files that were never
+    created are silently skipped, and ``~/.light_jupyter/token`` (web token,
+    not ours to manage) is never touched. Returns the removed paths.
+
+    The local machine keeps its copied key and config block -- browsers
+    cannot delete local files -- so the UI also offers the undo one-liners
+    from render_windows_undo / render_posix_undo.
+    """
+    global _current
+    removed = []
+    if _current is not None:
+        _current.stop()
+        _current = None
+    home = Path.home() if home is None else home
+    ssh = home / ".ssh"
+    state = home / STATE_DIR
+    _stop_stale_instance(state)          # also covers crashed-run leftovers
+    for p in (ssh / AUTH_NAME,
+              ssh / KEY_NAME, ssh / (KEY_NAME + ".pub"),
+              state / CONF_NAME,
+              state / HOST_KEY_NAME, state / (HOST_KEY_NAME + ".pub"),
+              state / PID_NAME, state / LOG_NAME):
+        try:
+            p.unlink()
+            removed.append(str(p))
+        except OSError:
+            pass
+    return removed
+
+
+def render_windows_undo() -> str:
+    return (
+        "# PowerShell -- undo light_jupyter ssh setup\n"
+        "Remove-Item \"$HOME\\.ssh\\id_light_jupyter\" "
+        "-ErrorAction SilentlyContinue\n"
+        "if (Test-Path \"$HOME\\.ssh\\config\") {\n"
+        "  $t = [IO.File]::ReadAllText(\"$HOME\\.ssh\\config\")\n"
+        "  $t = $t -replace '(?s)# --- light_jupyter:.*?"
+        "# --- end light_jupyter ---\\r?\\n?', ''\n"
+        "  [IO.File]::WriteAllText(\"$HOME\\.ssh\\config\", $t)\n"
+        "}")
+
+
+
+def render_posix_undo() -> str:
+    return (
+        "# Linux / macOS -- undo light_jupyter ssh setup\n"
+        f"rm -f ~/.ssh/{KEY_NAME}\n"
+        "sed -i.bak '/# --- light_jupyter:/,"
+        "# --- end light_jupyter ---/d' ~/.ssh/config")
+
+
+def prepare(advertise_port: Optional[int] = None) -> ManagedSshd:
+    """Set up keys and start the managed sshd. Raises SystemExit on trouble.
+
+    Must only run on a POSIX box: it needs sshd, ssh-keygen and Unix perms.
+    """
+    if os.name != "posix":
+        raise SystemExit("--enjoy: needs a POSIX host (sshd is a Unix daemon)")
+    sshd = find_binary("sshd")
+    if not sshd:
+        raise SystemExit("--enjoy: no sshd on this box.\n"
+                         "  install it with:  sudo apt install openssh-server")
+    keygen = find_binary("ssh-keygen")
+    if not keygen:
+        raise SystemExit("--enjoy: no ssh-keygen on this box.\n"
+                         "  install it with:  sudo apt install openssh-client")
+
+    home = Path.home()
+    state = home / STATE_DIR
+    state.mkdir(mode=0o700, exist_ok=True)
+
+    from .ports import pick_port
+    port = advertise_port or pick_port("0.0.0.0")
+
+    _stop_stale_instance(state)
+
+    host_key = state / HOST_KEY_NAME
+    if not host_key.exists():
+        r = subprocess.run([keygen, "-t", "ed25519", "-N", "",
+                            "-C", MARKER + "_host", "-f", str(host_key)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("--enjoy: cannot make the host key: "
+                             + r.stderr.strip())
+
+    sftp = "/usr/lib/openssh/sftp-server"
+    if not os.path.isfile(sftp):
+        sftp = None
+    conf = state / CONF_NAME
+    conf.write_text(sshd_config_text(port, home, sftp))
+    os.chmod(conf, 0o600)
+
+    log = state / LOG_NAME
+    priv, pub, _key_note = ensure_keypair(keygen, home / ".ssh" / KEY_NAME)
+    ensure_authorized_keys(home, pub)
+
+    proc = subprocess.Popen([sshd, "-D", "-E", str(log), "-f", str(conf)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        tail = ""
+        try:
+            tail = log.read_text().strip().splitlines()[-1]
+        except OSError:
+            pass
+        raise SystemExit(f"--enjoy: managed sshd exited immediately "
+                         f"(rc={proc.returncode}). last log line:\n  {tail}")
+
+    return ManagedSshd(proc, port)
+
+
+# ---------- local-side copy-paste blocks ----------
+
+def config_block(ip: str, port: int, user: str) -> str:
+    return ("# --- light_jupyter: added by `python -m light_jupyter --enjoy`;"
+            " ssh shortcut for the web IDE box ---\n"
+            f"Host {MARKER}\n"
+            f"  HostName {ip}\n"
+            f"  Port {port}\n"
+            f"  User {user}\n"
+            f"  IdentityFile ~/.ssh/{KEY_NAME}\n"
+            "# --- end light_jupyter ---")
+
+
+def render_windows(ip: str, port: int, user: str, priv: str) -> str:
+    b64 = base64.b64encode(priv.encode()).decode()
+    return (
+        "# PowerShell\n"
+        "mkdir -Force $HOME\\.ssh | Out-Null\n"
+        f"[IO.File]::WriteAllBytes(\"$HOME\\.ssh\\{KEY_NAME}\", "
+        f"[Convert]::FromBase64String(\"{b64}\"))\n"
+        f"icacls \"$HOME\\.ssh\\{KEY_NAME}\" /inheritance:r "
+        "/grant:r \"${env:USERNAME}:R\" | Out-Null\n"
+        "if (-not (Select-String -Quiet -Path $HOME\\.ssh\\config "
+        f"-Pattern 'Host {MARKER}' -ErrorAction SilentlyContinue)) {{\n"
+        "  Add-Content $HOME\\.ssh\\config @\"\n"
+        "\n"
+        + config_block(ip, port, user) +
+        "\n\"@\n"
+        "}\n"
+        f"ssh {MARKER}")
+
+
+def render_posix(ip: str, port: int, user: str, priv: str) -> str:
+    return (
+        "# Linux / macOS\n"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+        f"cat > ~/.ssh/{KEY_NAME} <<'LJEOF'\n"
+        f"{priv.rstrip()}\n"
+        "LJEOF\n"
+        f"chmod 600 ~/.ssh/{KEY_NAME}\n"
+        f"grep -q 'Host {MARKER}' ~/.ssh/config 2>/dev/null || "
+        "cat >> ~/.ssh/config <<'LJEOF'\n"
+        "\n"
+        + config_block(ip, port, user) +
+        "\nLJEOF\n"
+        f"ssh {MARKER}")
