@@ -35,3 +35,7 @@ lj_reachable_ports.txt
 .DS_Store
 Thumbs.db
 *.swp
+
+# the pre-split layout: superseded by light_jupyter_server/ and
+# light_jupyter_client/ (kept only because a shell may hold the directory)
+light_jupyter/
