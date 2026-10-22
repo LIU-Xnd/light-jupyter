@@ -97,6 +97,17 @@
           <button id="enjoy-sys">show Linux/macOS</button></li>
       </ol>
       <p>done? then just: <code id="enjoy-hint" class="hint">ssh light_jupyter</code></p>
+      <button id="enjoy-stop" class="danger">■ stop enjoying — remove sshd &amp; keys</button>
+    </div>
+    <div id="enjoy-undo" class="hidden">
+      <p class="ok-msg">✓ stopped: managed sshd is down and the server-side
+         files are removed (<span id="enjoy-removed">0</span>).</p>
+      <p>clean your machine (<span id="enjoy-undo-os">Windows PowerShell</span>)
+         — deletes the local key and the config block:</p>
+      <pre id="enjoy-undo-cmd" class="cmdbox"></pre>
+      <button id="enjoy-undo-copy">copy</button>
+      <button id="enjoy-undo-sys">show Linux/macOS</button>
+      <p class="dim">to use ssh again, click ⚠ ssh to set up a fresh key.</p>
     </div>
     <button id="enjoy-close">close</button>
   </div>

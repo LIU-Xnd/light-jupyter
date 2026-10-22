@@ -244,6 +244,62 @@ def get_or_start(advertise_port: Optional[int] = None) -> ManagedSshd:
     return _current
 
 
+def stop_and_clean(home: Optional[Path] = None) -> list:
+    """Stop Enjoying: kill the managed sshd and remove everything it made.
+
+    Server side this is a true undo: the sshd port closes and every
+    ``_light_jupyter``-suffixed file is deleted. Files that were never
+    created are silently skipped, and ``~/.light_jupyter/token`` (web token,
+    not ours to manage) is never touched. Returns the removed paths.
+
+    The local machine keeps its copied key and config block -- browsers
+    cannot delete local files -- so the UI also offers the undo one-liners
+    from render_windows_undo / render_posix_undo.
+    """
+    global _current
+    removed = []
+    if _current is not None:
+        _current.stop()
+        _current = None
+    home = Path.home() if home is None else home
+    ssh = home / ".ssh"
+    state = home / STATE_DIR
+    _stop_stale_instance(state)          # also covers crashed-run leftovers
+    for p in (ssh / AUTH_NAME,
+              ssh / KEY_NAME, ssh / (KEY_NAME + ".pub"),
+              state / CONF_NAME,
+              state / HOST_KEY_NAME, state / (HOST_KEY_NAME + ".pub"),
+              state / PID_NAME, state / LOG_NAME):
+        try:
+            p.unlink()
+            removed.append(str(p))
+        except OSError:
+            pass
+    return removed
+
+
+def render_windows_undo() -> str:
+    return (
+        "# PowerShell -- undo light_jupyter ssh setup\n"
+        "Remove-Item \"$HOME\\.ssh\\id_light_jupyter\" "
+        "-ErrorAction SilentlyContinue\n"
+        "if (Test-Path \"$HOME\\.ssh\\config\") {\n"
+        "  $t = [IO.File]::ReadAllText(\"$HOME\\.ssh\\config\")\n"
+        "  $t = $t -replace '(?s)# --- light_jupyter:.*?"
+        "# --- end light_jupyter ---\\r?\\n?', ''\n"
+        "  [IO.File]::WriteAllText(\"$HOME\\.ssh\\config\", $t)\n"
+        "}")
+
+
+
+def render_posix_undo() -> str:
+    return (
+        "# Linux / macOS -- undo light_jupyter ssh setup\n"
+        f"rm -f ~/.ssh/{KEY_NAME}\n"
+        "sed -i.bak '/# --- light_jupyter:/,"
+        "# --- end light_jupyter ---/d' ~/.ssh/config")
+
+
 def prepare(advertise_port: Optional[int] = None) -> ManagedSshd:
     """Set up keys and start the managed sshd. Raises SystemExit on trouble.
 

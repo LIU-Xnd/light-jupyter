@@ -519,6 +519,35 @@ def main() -> int:
             pats.append(str(spec.matcher.pattern))
     check("enjoy: /api/enjoy route is registered (web button path)",
           any("/api/enjoy" in p for p in pats), str(pats))
+
+    # stop enjoying: true undo on the server side, sandboxed in the tmpdir.
+    # the web token lives in ~/.light_jupyter too and must survive.
+    from .enjoy import stop_and_clean, render_windows_undo, render_posix_undo
+    (tmp_home / ".light_jupyter").mkdir(exist_ok=True)
+    (tmp_home / ".light_jupyter" / "token").write_text("keep-me")
+    for keep in ("sshd_config_light_jupyter", "id_light_jupyter_host_ed25519"):
+        (tmp_home / ".light_jupyter" / keep).write_text("x")
+    ensure_authorized_keys(tmp_home, pub)
+    removed = stop_and_clean(tmp_home)
+    check("enjoy: stop removes the suffixed server files",
+          len(removed) >= 6
+          and not (tmp_home / ".ssh" / AUTH_NAME).exists()
+          and not (tmp_home / ".ssh" / KEY_NAME).exists()
+          and not (tmp_home / ".light_jupyter" / "sshd_config_light_jupyter"
+                   ).exists(), f"removed {len(removed)}")
+    check("enjoy: stop leaves the web token alone",
+          (tmp_home / ".light_jupyter" / "token").read_text() == "keep-me",
+          "token clobbered!")
+    removed2 = stop_and_clean(tmp_home)
+    check("enjoy: stop is idempotent", removed2 == [], str(removed2))
+
+    wu, pu = render_windows_undo(), render_posix_undo()
+    check("enjoy: undo one-liners delete the local key",
+          "Remove-Item" in wu and "id_light_jupyter" in wu
+          and "rm -f ~/.ssh/id_light_jupyter" in pu, "missing key removal")
+    check("enjoy: undo strips the delimited config block",
+          "# --- light_jupyter:" in wu and "end light_jupyter" in wu
+          and "sed -i.bak" in pu, "missing config cleanup")
     check("enjoy: enjoy button + modal are wired into the page",
           "enjoy-modal" in open(os.path.join(
               os.path.dirname(os.path.abspath(

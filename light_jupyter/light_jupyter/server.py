@@ -211,14 +211,25 @@ class EnjoyHandler(TokenMixin, tornado.web.RequestHandler):
         if not self.require_token():
             return
         from . import enjoy
+        body = json.loads(self.request.body or b"{}")
+        op = body.get("op", "start")
+        host = self.request.host.split(":")[0] or "127.0.0.1"
+        user = self.application.current_user
         try:
+            if op == "stop":
+                removed = enjoy.stop_and_clean()
+                self.finish({"ok": True, "stopped": True,
+                             "removed": removed, "host": host, "user": user,
+                             "undo_win": enjoy.render_windows_undo(),
+                             "undo_posix": enjoy.render_posix_undo(),
+                             "hint": "click ⚠ ssh again to enable it afresh"})
+                return
             handle = enjoy.get_or_start()
         except SystemExit as e:
             self.set_status(400)
             self.finish({"error": str(e)})
             return
-        host = self.request.host.split(":")[0] or "127.0.0.1"
-        self.finish(handle.payload(host, self.application.current_user))
+        self.finish(handle.payload(host, user))
 
 
 # ---------------------------------------------------------------- websocket

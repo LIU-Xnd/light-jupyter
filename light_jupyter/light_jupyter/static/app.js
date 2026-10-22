@@ -454,8 +454,9 @@ window.addEventListener("resize", () => {
 // a ready-made one-liner; the user saves the key, pastes, runs
 // `ssh light_jupyter`.
 
-let ENJOY = null;          // last /api/enjoy payload
+let ENJOY = null;          // last /api/enjoy setup payload
 let ENJOY_SYS = "win";     // which one-liner is shown
+let ENJOY_STOP = null;     // last stop payload (undo commands)
 
 function downloadKey() {
   const bin = atob(ENJOY.key_b64);
@@ -469,9 +470,24 @@ function downloadKey() {
 
 function showEnjoySys(sys) {
   ENJOY_SYS = sys;
-  $("enjoy-cmd").textContent = sys === "win" ? ENJOY.win_cmd : ENJOY.posix_cmd;
-  $("enjoy-os").textContent = sys === "win" ? "Windows PowerShell" : "Linux / macOS";
-  $("enjoy-sys").textContent = sys === "win" ? "show Linux/macOS" : "show Windows";
+  const win = ENJOY ? ENJOY.win_cmd : ENJOY_STOP.undo_win;
+  const posix = ENJOY ? ENJOY.posix_cmd : ENJOY_STOP.undo_posix;
+  const box = ENJOY ? $("enjoy-cmd") : $("enjoy-undo-cmd");
+  box.textContent = sys === "win" ? win : posix;
+  const osLabel = sys === "win" ? "Windows PowerShell" : "Linux / macOS";
+  const toggle = sys === "win" ? "show Linux/macOS" : "show Windows";
+  if (ENJOY) {
+    $("enjoy-os").textContent = osLabel;
+    $("enjoy-sys").textContent = toggle;
+  } else {
+    $("enjoy-undo-os").textContent = osLabel;
+    $("enjoy-undo-sys").textContent = toggle;
+  }
+}
+
+function setCopyFeedback(btn) {
+  btn.textContent = "copied ✓";
+  setTimeout(() => { btn.textContent = "copy"; }, 1500);
 }
 
 $("enjoy").onclick = async () => {
@@ -479,6 +495,8 @@ $("enjoy").onclick = async () => {
   $("enjoy-msg").textContent = "starting the managed sshd…";
   $("enjoy-msg").style.color = "var(--dim)";
   $("enjoy-body").classList.add("hidden");
+  $("enjoy-undo").classList.add("hidden");
+  ENJOY_STOP = null;
   try {
     ENJOY = await postJSON("/api/enjoy", {});
     $("enjoy-msg").textContent =
@@ -494,14 +512,39 @@ $("enjoy").onclick = async () => {
   }
 };
 
+$("enjoy-stop").onclick = async () => {
+  if (!confirm("stop enjoying? the managed sshd goes down and the "
+               + "server-side keys are deleted.")) return;
+  $("enjoy-msg").textContent = "stopping…";
+  try {
+    ENJOY_STOP = await postJSON("/api/enjoy", { op: "stop" });
+    ENJOY = null;
+    $("enjoy-body").classList.add("hidden");
+    $("enjoy-undo").classList.remove("hidden");
+    $("enjoy-msg").textContent = "";
+    $("enjoy-removed").textContent = String(ENJOY_STOP.removed.length);
+    ENJOY_SYS = /Win/i.test(navigator.userAgent) ? "win" : "posix";
+    showEnjoySys(ENJOY_SYS);
+  } catch (err) {
+    $("enjoy-msg").textContent = "⚠ " + err.message;
+    $("enjoy-msg").style.color = "var(--bad)";
+  }
+};
+
 $("enjoy-close").onclick = () => $("enjoy-modal").classList.add("hidden");
 $("enjoy-dl").onclick = downloadKey;
 $("enjoy-sys").onclick = () => showEnjoySys(ENJOY_SYS === "win" ? "posix" : "win");
+$("enjoy-undo-sys").onclick = () => showEnjoySys(ENJOY_SYS === "win" ? "posix" : "win");
 $("enjoy-copy").onclick = () => {
   const cmd = ENJOY_SYS === "win" ? ENJOY.win_cmd : ENJOY.posix_cmd;
   navigator.clipboard.writeText(cmd).then(
-    () => { $("enjoy-copy").textContent = "copied ✓";
-            setTimeout(() => { $("enjoy-copy").textContent = "copy"; }, 1500); },
+    () => setCopyFeedback($("enjoy-copy")),
+    () => alert("copy failed — select the text manually"));
+};
+$("enjoy-undo-copy").onclick = () => {
+  const cmd = ENJOY_SYS === "win" ? ENJOY_STOP.undo_win : ENJOY_STOP.undo_posix;
+  navigator.clipboard.writeText(cmd).then(
+    () => setCopyFeedback($("enjoy-undo-copy")),
     () => alert("copy failed — select the text manually"));
 };
 

@@ -114,6 +114,11 @@ html, body {
   border: 1px solid var(--line); cursor: pointer; font-size: 12px;
 }
 .modal-card button:hover { border-color: var(--accent); }
+.modal-card button.danger {
+  margin-top: 12px; color: var(--bad); border-color: var(--bad);
+}
+.modal-card button.danger:hover { background: var(--bad); color: var(--panel); }
+.modal-card .ok-msg { color: var(--ok); font-size: 13px; }
 .cmdbox {
   margin: 6px 0; padding: 10px; max-height: 260px; overflow: auto;
   background: var(--panel-2); border: 1px solid var(--line);

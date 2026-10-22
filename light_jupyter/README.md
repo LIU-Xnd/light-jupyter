@@ -123,6 +123,16 @@ crashed run is detected via the pidfile and cleaned up on the next start.
 `--enjoy-port` overrides the advertised port; by default it is auto-picked
 the same way as `--port`.
 
+### Stop enjoying
+
+The modal's **■ stop enjoying** button undoes everything: the managed sshd
+is killed (the port closes) and every server-side file it created is
+deleted — idempotent, and the web token in `~/.light_jupyter/token` is
+untouched. Browsers cannot delete files on your machine, so the page then
+offers a local-undo one-liner (removes `~/.ssh/id_light_jupyter` and strips
+the delimited config block). Set up again any time with ⚠ ssh — it mints a
+fresh key, so redo the local step.
+
 ## Self-test
 
 ```bash
