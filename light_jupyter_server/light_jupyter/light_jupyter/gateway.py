@@ -1,22 +1,27 @@
 """light_jupyter gateway — the server side of the egress-only tunnel.
 
-The server has **no inbound port** (egress only), so it cannot accept a
-browser connection. Instead it dials *out* to the client, which is listening
-on the browser's machine, and keeps that single socket open forever. Every
-browser request is multiplexed over it:
+The server has **no inbound port open** (egress only), so it cannot accept a
+browser connection, and it cannot be discovered by a beacon either: on this
+network inbound UDP is filtered just like TCP, so a client cannot announce
+itself. The address is therefore typed in once:
 
-    browser -> 127.0.0.1:48999  (client)
-            -> one outbound socket from the server
+    python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port 8890
+
+From then on the server dials *out* to the client (never filtered) and keeps
+that single socket open, multiplexing every browser connection over it:
+
+    browser -> 127.0.0.1:48999      (client, on the browser's machine)
+            -> the one outbound socket from here
             -> stream -> lj on 127.0.0.1:<lj-port>
 
-Because only one outbound socket is needed, all concurrent browser sessions
-share it, and each is a separate stream id.
+The dial-in is authenticated: 'LJGATE' + 4-byte timestamp + 16-byte truncated
+HMAC-SHA256 over the timestamp, compared in constant time. A replayed
+handshake is rejected (the timestamp must be fresh) and, without the secret
+file, nothing can attach. Every browser connection then arrives as its own
+stream on the same socket:
 
-Frames are the client's: 4-byte length | 1-byte type | 4-byte stream id |
-payload, with 0x01 OPEN, 0x02 DATA, 0x03 CLOSE, 0x04 ACK. The handshake is
-'HELLO' + 4-byte timestamp + 16-byte truncated HMAC-SHA256 over the
-timestamp, so a replayed handshake is rejected and an attacker without the
-secret file cannot attach.
+    4-byte length | 1-byte type | 4-byte stream id | payload
+    0x01 OPEN, 0x02 DATA, 0x03 CLOSE, 0x04 ACK
 
 This module never listens for inbound traffic.
 """

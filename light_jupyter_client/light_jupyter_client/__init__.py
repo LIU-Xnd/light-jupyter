@@ -16,5 +16,5 @@ Run:
 It prints the exact command to run on the server.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __all__ = ["__version__"]

@@ -30,13 +30,17 @@ python -m light_jupyter_client
 
 ## Use
 
-**1. On this machine (where the browser is):**
+Run this on **both** machines — the browser's, and the server's. The server
+has no inbound port, so the server dials *you*; all you do is hand it your
+address once (a beacon cannot work: inbound UDP is filtered here too).
+
+**1. On the browser machine** (Windows / macOS / Linux):
 
 ```bash
 python -m light_jupyter_client
 ```
 
-It prints your address and the exact command for the server:
+It prints your address and one line to copy:
 
 ```
   light_jupyter client  (egress-only tunnel)
@@ -44,19 +48,31 @@ It prints your address and the exact command for the server:
     server dials : 192.168.77.160:45901
     browser at   : http://127.0.0.1:48999
 
-  ON THE SERVER, run:
-    python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port 8890
+  copy this line to the server terminal:
+
+    python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port <LJ-PORT>
 ```
 
-**2. Copy the shared secret to this machine** (one-time, the first run on
-the server creates it):
+**2. Copy the shared secret to this machine** (one-time; the server creates
+it on first run):
 
 ```bash
 scp <server>:~/.light_jupyter/secret_light_jupyter .
 ```
 
-**3. Open <http://127.0.0.1:48999/#token=...> in your browser** — put the
-token from the server's banner in the fragment.
+**3. On the server**, paste the line from step 1 and fill in `<LJ-PORT>`
+with the port its banner shows (the random one is fine — the tunnel makes it
+reachable):
+
+```bash
+python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port 17235
+```
+
+It will say `link up -> lj 127.0.0.1:17235`.
+
+**4. Open <http://127.0.0.1:48999/#token=...> in your browser**, using the
+token from the server's banner. That is it — no port on the server had to be
+opened.
 
 ## How the tunnel works
 

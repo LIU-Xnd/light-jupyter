@@ -285,15 +285,20 @@ def main(argv=None) -> int:
     secret = load_secret(args.secret_file)
     me = local_addr()
 
+    # A beacon cannot work here (inbound UDP is filtered too), so the one
+    # thing the user has to do is copy this address to the server.
+    server_cmd = (f"python -m light_jupyter.gateway --client {me} "
+                  f"{args.listen_port} --lj-port <LJ-PORT>")
+
     log("")
     log("  light_jupyter client  (egress-only tunnel)")
     log(f"    this machine : {me}")
     log(f"    server dials : {me}:{args.listen_port}")
     log(f"    browser at   : http://127.0.0.1:{args.browser_port}")
     log("")
-    log("  ON THE SERVER, run:")
-    log(f"    python -m light_jupyter.gateway --client {me} "
-        f"{args.listen_port} --lj-port <LJ-PORT>")
+    log("  copy this line to the server terminal:")
+    log("")
+    log(f"    {server_cmd}")
     log("")
     if args.print_only:
         return 0
