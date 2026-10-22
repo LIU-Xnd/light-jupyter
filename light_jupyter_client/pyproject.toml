@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "light-jupyter-client"
+version = "0.1.0"
+description = "Browser-side end of the light_jupyter egress-only reverse tunnel"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { text = "MIT" }
+dependencies = []          # stdlib only: it must run anywhere, including Windows
+
+[project.scripts]
+light-jupyter-client = "light_jupyter_client.client:main"
+
+[tool.setuptools]
+packages = ["light_jupyter_client"]
