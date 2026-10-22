@@ -52,6 +52,14 @@ class Session:
         env_full.setdefault("TERM", "xterm-256color")
 
         self.master, self.slave = pty.openpty()
+        # The pump thread reads from a PRIVATE dup: Session.close() runs on
+        # the event-loop thread and closes self.master, and a bare
+        # os.close(master) while the pump is inside select()+os.read(master)
+        # lets the fd number be recycled by another session's openpty -- the
+        # pump would then read (or block forever on) a foreign fd. A dup
+        # stays valid until we close it ourselves.
+        self._read_fd = os.dup(self.master)
+        self._read_fd_closed = False
         self._set_winsize(cols, rows)
 
         self.proc = subprocess.Popen(
@@ -80,19 +88,38 @@ class Session:
         self.cols, self.rows = cols, rows
         self._set_winsize(cols, rows)
 
-    def read(self, size: int = 65536, timeout: float = 0.05) -> bytes:
-        """Non-blocking-ish read. Returns b'' when nothing is ready."""
+    def _close_read_fd(self) -> None:
+        """Close the pump's private dup exactly once."""
+        if self._read_fd_closed:
+            return
+        self._read_fd_closed = True
         try:
-            r, _, _ = select.select([self.master], [], [], timeout)
+            os.close(self._read_fd)
+        except OSError:
+            pass
+
+    def read(self, size: int = 65536, timeout: float = 0.05) -> bytes:
+        """Non-blocking-ish read. Returns b'' when nothing is ready.
+
+        Reads the PRIVATE dup (never self.master), so a concurrent close()
+        cannot recycle the fd out from under the select+read pair.
+        """
+        try:
+            r, _, _ = select.select([self._read_fd], [], [], timeout)
         except (OSError, ValueError):
             return b""
         if not r:
             return b""
         try:
-            return os.read(self.master, size)
+            data = os.read(self._read_fd, size)
         except OSError:
             self.closed = True
+            self._close_read_fd()
             return b""
+        if data == b"":                      # EOF: master closed / shell gone
+            self.closed = True
+            self._close_read_fd()
+        return data
 
     def write(self, data: str) -> int:
         if self.closed:
