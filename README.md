@@ -13,11 +13,27 @@ runs an sshd instance whose lifetime is bound to the server's, so plain
 
 No Jupyter kernel, no notebook server, no X11.
 
+## Install
+
+From GitHub, editable (a clone lands in `src/`, so `git pull` inside it
+updates the install):
+
+```bash
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter"
+```
+
+tornado is pulled in automatically. Or clone first and install from the
+checkout — same result:
+
+```bash
+git clone https://github.com/LIU-Xnd/light-jupyter.git
+python3 -m pip install -e ./light-jupyter/light_jupyter
+```
+
 ## Run
 
 ```bash
-pip install tornado
-python -m light_jupyter
+python3 -m light_jupyter        # or just: light-jupyter
 ```
 
 That is the whole thing. It picks a free port, serves your home directory,

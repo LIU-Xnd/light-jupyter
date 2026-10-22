@@ -12,8 +12,16 @@ All over **one port**. No Jupyter kernel, no notebook server, no X11.
 ## Run
 
 ```bash
-pip install tornado
-python -m light_jupyter
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter"
+python3 -m light_jupyter        # or just: light-jupyter
+```
+
+The install is editable and pulls tornado in automatically; on the target
+box it can also be done from a plain clone:
+
+```bash
+git clone https://github.com/LIU-Xnd/light-jupyter.git
+python3 -m pip install -e ./light-jupyter/light_jupyter
 ```
 
 That is the whole thing. It picks a free port, serves your home directory,
