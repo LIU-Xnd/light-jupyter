@@ -251,12 +251,21 @@ def main(argv=None) -> int:
     loop = tornado.ioloop.IOLoop.current()
 
     def _stop(*_):
+        # Runs inside the signal handler. Tornado 6.4 + py3.8: a
+        # loop.add_callback(loop.stop) from here does NOT reliably wake the
+        # epoll_wait (measured: the loop sat in select for 12 s after
+        # SIGINT, stacks dumped). Everything is closed synchronously below,
+        # so just exit hard -- deterministic, no teardown to hang on.
         print("\nshutting down", flush=True)
         for s in list(app.sessions.values()):
             s.close()
         if enjoy_handle is not None:
             enjoy_handle.stop()          # the managed sshd dies with lj
-        loop.add_callback(loop.stop)
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        os._exit(0)
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
