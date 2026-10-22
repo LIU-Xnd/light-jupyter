@@ -1,126 +1,89 @@
 # light_jupyter
 
-A token-gated web IDE that runs on a remote Linux box and serves, over a
-single port, from any browser:
+A token-gated web IDE (terminal + SFTP-style file browser + read-only editor)
+that runs on a remote Linux box and serves, over a single port, from any
+browser.
 
-- a real interactive terminal (PTY, full TTY semantics)
-- an SFTP-style file browser (upload, download, mkdir, rename, delete)
-- an editor pane that is read-only until you press **edit**
+```
+v1.0.0 and later   server has NO inbound ports; only outbound is allowed.
+                   Both halves run: the client on the browser's machine,
+                   the server dials out to it. Any random lj port works.
 
-With `--enjoy` — or one click on the **⚠ ssh** button in the web UI — it also
-runs an sshd instance whose lifetime is bound to the server's, so plain
-`ssh light_jupyter` works alongside the browser session.
+v0.x and earlier   the browser connected straight to the server, so the
+                   port had to be reachable INBOUND. Only usable where the
+                   network admits it (no firewall / same open subnet).
+```
 
-No Jupyter kernel, no notebook server, no X11.
+## Two halves
+
+**`light_jupyter_server/`** — the web IDE. Linux only (real PTY, sshd);
+depends on tornado. Also provides the `gateway` that dials out to the client.
+
+**`light_jupyter_client/`** — the browser-side end of the egress-only
+tunnel. Standard library only, so it runs on Windows, macOS and Linux. The
+browser talks to `http://127.0.0.1:<port>`; nothing is exposed to the
+network.
 
 ## Install
 
-From GitHub, editable (a clone lands in `src/`, so `git pull` inside it
-updates the install):
+Server (Linux):
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter"
+python3 -m pip install -e "light-jupyter @ git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server"
 ```
 
-tornado is pulled in automatically. Or clone first and install from the
-checkout — same result:
+Client (any OS, no dependencies):
 
 ```bash
-git clone https://github.com/LIU-Xnd/light-jupyter.git
-python3 -m pip install -e ./light-jupyter/light_jupyter
+python3 -m pip install -e ./light_jupyter_client
+# or just run it in place
+python -m light_jupyter_client
 ```
-
-> Linux only (real PTY + sshd); the CLI will not start on Windows/macOS.
 
 ## Run
 
+On the server:
+
 ```bash
-python3 -m light_jupyter        # or just: light-jupyter
+python -m light_jupyter        # prints its URL and token
 ```
 
-That is the whole thing. It picks a free port, serves your home directory,
-mints (or reuses) a token, and prints the URL. The host part of the URL is the
-first non-loopback IPv4 on the machine, read from `ip addr` — nothing is
-hardcoded:
+On the browser machine (new in v1.0.0, needed whenever the server's port is
+not reachable inbound):
 
-```
-  light_jupyter
-    url   : http://<first-ipv4>:<port>/#token=lj_9YSXZWG5AEQXF-...
-    port  : 20410  (auto)
-    root  : /home/<user>
-    user  : <user>
-    token : lj_9YSXZWG5AEQXF-...
+```bash
+python -m light_jupyter_client
 ```
 
-Open that URL in a browser. The fragment (`#token=...`) never reaches the
-server — the page reads it, puts it in a cookie, and hands it to the
-websocket. A bad token shows an explicit error, not a blank page.
+It prints your address and the gateway command to paste on the server. Then
+open `http://127.0.0.1:<browser-port>/#token=...` — put the token from the
+server's banner in the fragment. Full walkthrough in
+[`light_jupyter_client/README.md`](light_jupyter_client/README.md).
 
-## Flags
+## What v1.0.0 changed
 
-Every flag is optional; they exist for when you need to override a default.
+The browser used to connect straight to the server, which meant the port
+had to be open inbound. On a network that filters inbound traffic per port —
+the lab network this was built on admits 6 of 65,535 — that made an
+auto-picked port unreachable no matter what the server did.
 
-| flag | meaning |
-|---|---|
-| `--port` | listen port; empty / `auto` / `0` picks a free one |
-| `--host` | bind address (default `0.0.0.0`) |
-| `--root` | directory the file pane shows (default `/home/<user>`) |
-| `--token` | pin the token instead of generating one |
-| `--token-file` | where the token is persisted (default `~/.light_jupyter/token`) |
-| `--regen-token` | discard the stored token and mint a new one |
-| `--show-token` | print the token and exit |
-| `--user` | shell user (default: current user) |
-| `--trust-proxy` | honour `X-Forwarded-For` when rate limiting |
-| `--throttle-threshold` | failed token attempts before backoff (default 5) |
-| `--print-only` | print the URL and exit |
+Now the direction is reversed: the server dials **out** (never filtered) to
+the client on the browser's machine, and every browser connection is
+multiplexed over that one outbound socket. The server needs no open port at
+all, and any free port it picks becomes reachable.
+
+Discovery by beacon is not possible in that setup — inbound UDP is filtered
+too — so the client prints its address and you paste it into the gateway
+command once.
 
 ## Security
 
-Tokens are 256-bit CSPRNG values in Crockford Base32, compared in constant
-time and persisted with mode 0600:
-
-```
-lj_9YSXZWG5AEQXF-1BGZX2YSS7A70-P6696FF6Z46NG-E8V8DGFK16STC
-```
-
-The alphabet excludes `I`, `L`, `O` and `U`, so a token read off a screen
-cannot be mistyped into a *different valid* token. Repeated failures from one
-IP are throttled with exponential backoff (`429` + `Retry-After`).
-
-File access is confined to the root: `FileSystem._safe()` rejects anything
-resolving outside it, so `../` from the browser cannot escape.
-
-The editor is read-only by default; a file is only writable after you press
-**edit**, and `save` stays disabled until then.
-
-## Self-test
-
-```bash
-python -m light_jupyter.selftest
-```
-
-93 checks: PTY round-trip, file API, path traversal, token gate (401 / 429 /
-200), websocket command round-trip, port selection, token minting and
-persistence, address discovery.
-
-## Design notes
-
-See [light_jupyter/README.md](light_jupyter/README.md) for the full reference:
-the rule of every flag, why the shell uses `pty.openpty()` instead of
-`pty.fork()`, why the terminal had to be xterm.js rather than a `<pre>` full
-of escape bytes, and how `--port` auto-scans below the ephemeral range
-(with a caveat for networks whose ACLs drop most inbound ports).
-
-```
-light_jupyter/
-  __main__.py    CLI entry point
-  ports.py       port parsing / free-port scanning / socket binding
-  tokens.py      256-bit token minting, persistence, auth throttle
-  server.py      Tornado HTTP + WebSocket, token gate
-  backend.py     Session (PTY shell) and FileSystem (path-confined file ops)
-  selftest.py    no-framework self test
-  static/        index.html, app.css, app.js, vendor/xterm.js
-```
+- 256-bit CSPRNG tokens in Crockford Base32, compared in constant time,
+  persisted 0600, with per-IP exponential backoff on failure.
+- File access confined to the root; `../` cannot escape.
+- The editor is read-only until you press **edit**.
+- The tunnel's dial-in is authenticated with a fresh-timestamp HMAC; without
+  the shared secret file nothing can attach.
 
 ## License
 

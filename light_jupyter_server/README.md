@@ -9,10 +9,28 @@ you, from any browser:
 
 All over **one port**. No Jupyter kernel, no notebook server, no X11.
 
+## Which version for which network
+
+```
+v1.0.0 and later   the server needs NO inbound port -- only outbound. Run
+                   light_jupyter_client on the browser machine as well; the
+                   server dials out to it and any free port becomes
+                   reachable. Use this when a firewall filters inbound
+                   traffic per port.
+
+v0.x and earlier   the browser connected straight to the server, so the
+                   port had to be reachable inbound. Fine on an open network
+                   with no firewall between the two machines; broken (and
+                   unfixable from the server side) behind a port filter.
+```
+
+The tunnel is described in
+[`light_jupyter_client/README.md`](../light_jupyter_client/README.md).
+
 ## Run
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter"
+python3 -m pip install -e "light-jupyter @ git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server"
 python3 -m light_jupyter        # or just: light-jupyter
 ```
 
@@ -21,7 +39,7 @@ box it can also be done from a plain clone:
 
 ```bash
 git clone https://github.com/LIU-Xnd/light-jupyter.git
-python3 -m pip install -e ./light-jupyter/light_jupyter
+python3 -m pip install -e ./light_jupyter_server
 ```
 
 > Linux only (real PTY + sshd); the CLI will not start on Windows/macOS.

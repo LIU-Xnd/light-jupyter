@@ -8,6 +8,13 @@ open — outbound only.** So the server cannot be reached by a browser, and
 nothing here ever connects to it. The server dials *us*.
 
 ```
+v1.0.0 and later   this client. Works when the server may only make
+                   outbound connections — any firewall, any lj port.
+v0.x and earlier   no client existed: the browser connected straight to the
+                   server, which required the port to be reachable inbound.
+```
+
+```
 browser  ->  127.0.0.1:48999          (this process)
         ->  the socket the server opened from the outside
         ->  stream  ->  light_jupyter on the server
