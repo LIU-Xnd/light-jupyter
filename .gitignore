@@ -1,0 +1,37 @@
+# virtualenvs
+.venv/
+.venv-*/
+venv/
+env/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# credentials / local state
+.env
+*.token
+.light_jupyter/
+
+# one-off probe and diagnostic scripts (contain hardcoded credentials)
+lj_*.py
+s41_*.py
+probe_*.py
+login_probe.py
+kex_probe.py
+fabric_probe.py
+capture_login.py
+lj_reachable_ports.txt
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

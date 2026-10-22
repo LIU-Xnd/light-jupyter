@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "light-jupyter"
+version = "0.1.0"
+description = "A lightweight token-gated web IDE: terminal + SFTP over one port"
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = ["tornado>=6.0"]
+
+[project.scripts]
+light-jupyter = "light_jupyter.__main__:main"
+
+[tool.setuptools]
+packages = ["light_jupyter"]
+
+[tool.setuptools.package-data]
+light_jupyter = ["static/*"]
