@@ -211,8 +211,8 @@ def main() -> int:
 
     print()
     print("=== 5. port auto-detection ===")
-    from light_jupyter.ports import (RESERVED, bind_socket, is_port_free,
-                                     parse_port, pick_port)
+    from .ports import (DEFAULT_CANDIDATES, RESERVED, bind_socket, is_port_free,
+                        parse_port, pick_port)
 
     check("parse_port: empty -> auto", parse_port("") is None)
     check("parse_port: 'auto' -> auto", parse_port("auto") is None)
@@ -233,13 +233,13 @@ def main() -> int:
 
     check("is_port_free: unused high port", is_port_free(47999))
 
-    # the chosen port must be real, free and bindable
+    # the chosen port must be real, free and bindable; auto-pick draws from
+    # DEFAULT_CANDIDATES (the ports the lab firewall admits), see ports.py
     got = pick_port("127.0.0.1")
     check("pick_port returns a valid port",
           isinstance(got, int) and 1024 < got <= 65535, str(got))
-    # it must stay below the OS ephemeral range, which is unreachable here
-    check("pick_port stays below the ephemeral range",
-          got < 32768, str(got))
+    check("pick_port comes from DEFAULT_CANDIDATES",
+          got in DEFAULT_CANDIDATES, str(got))
     check("pick_port skips RESERVED ports", got not in RESERVED, str(got))
     check("pick_port result is actually free",
           is_port_free(got, "127.0.0.1"), str(got))
@@ -259,22 +259,14 @@ def main() -> int:
     check("bind_socket(0) yields a real ephemeral port",
           1024 < eph <= 65535, str(eph))
 
-    # repeated calls must all stay in the usable range and be bindable
-    picks = [pick_port("127.0.0.1") for _ in range(3)]
-    check("repeated pick_port stays in range",
-          all(1024 < p < 32768 for p in picks), str(picks))
-    check("repeated pick_port yields bindable ports",
-          all(is_port_free(p, "127.0.0.1") for p in picks), str(picks))
-
-    # an explicit start is honoured only when it is inside the scanned range
-    inside = pick_port("127.0.0.1", start=25000)
-    check("pick_port honours a start inside the range",
-          inside == 25000, str(inside))
-    # outside the range it wraps back into it rather than returning something
-    # unreachable
-    outside = pick_port("127.0.0.1", start=47990)
-    check("pick_port wraps an out-of-range start back in",
-          1024 < outside < 32768, str(outside))
+    # when the first candidate is taken, the next candidate is offered
+    s4 = bind_socket(DEFAULT_CANDIDATES[0], "127.0.0.1")
+    nxt = pick_port("127.0.0.1")
+    check("pick_port falls through to the next candidate",
+          nxt in DEFAULT_CANDIDATES[1:], str(nxt))
+    s4.close()
+    check("pick_port recovers after the blocker goes away",
+          pick_port("127.0.0.1") == DEFAULT_CANDIDATES[0])
 
     # well-known service ports stay off the auto-pick path
     check("RESERVED excludes ssh/rdp-ish ports",

@@ -1,29 +1,24 @@
 """Port selection.
 
-Any free port works. The box has no port whitelist, so there is nothing to
-work around: when ``--port`` is empty we simply let the kernel assign one and
-read the real number back off the socket.
+``--port`` accepts a number, or empty/auto meaning "pick for me".
 
-    --port 8890     -> 8890
-    --port ''       -> whatever the kernel hands out
-    --port auto     -> same as ''
-
-The only thing worth doing carefully is binding the socket ourselves instead
-of calling ``app.listen()``: that way a port that was free a moment ago but
-got taken in between surfaces as a clear message rather than an
-EADDRINUSE traceback from deep inside Tornado, and the bound port number is
-always known.
+Auto-pick used to scan 1024-32767 or let the kernel assign one. Measurement
+on 2026-10-22 killed both ideas: the lab firewall admits inbound TCP only on
+specific administratively opened ports (see pick_port), so a random port
+produces a server that runs fine but that no client can reach.
 """
 
 from __future__ import annotations
 
 import socket
-import random
 from typing import Optional
 
 # Ports we refuse to auto-pick, because binding them would need privileges or
 # would collide with the SSH daemon / system services in confusing ways.
 RESERVED = frozenset({22, 25, 53, 111, 123, 389, 445, 636, 1433, 3306})
+
+# Ports measured open on the lab firewall (see pick_port docstring).
+DEFAULT_CANDIDATES = (8890, 9999)
 
 
 def parse_port(text: Optional[str]) -> Optional[int]:
@@ -69,25 +64,25 @@ def bind_socket(port: int, host: str = "0.0.0.0") -> socket.socket:
 
 
 def pick_port(host: str = "0.0.0.0", start: Optional[int] = None) -> int:
-    """Choose a free port below the OS ephemeral range and return it.
+    """Return a free port from the ports this network actually admits.
 
-    Why not just ``bind(port=0)``? That hands back something in 32768-60999,
-    and on this network the ephemeral range is not reachable from the client
-    (measured: 37233 TIMEOUT while 8890 and 9999 both answer). Scanning
-    1024-32767 keeps us in the range that is reachable.
+    Measured 2026-10-22 from the client segment: inbound TCP is dropped for
+    almost every port -- 1024, 3000, 5000, 7000, 8000, 8080, 8500, 8800,
+    9000, 10000, 11000, 15000, 20410, 25000, 30000, 32000, 37233 and 46361
+    all TIME OUT, while 9999 answers RST (nothing listening) and 8890 serves
+    HTTP. So admission is per-port (administratively opened), not a range,
+    and a random scan would almost always land on a black hole: the server
+    runs fine but no client can ever connect.
 
-    ``start`` picks the scan's first port (random by default) so repeated
-    launches do not all queue up behind the same number.
+    The auto choice is therefore the first free port among the known-open
+    ones. Pass --port explicitly to override.
     """
-    lo, hi = 1024, 32767
-    if start is None:
-        start = random.randint(lo, hi - 1)
-    span = hi - lo
-    for i in range(span):
-        p = lo + ((start - lo + i) % span)
+    for p in DEFAULT_CANDIDATES:
         if p in RESERVED:
             continue
         if is_port_free(p, host):
             return p
     raise RuntimeError(
-        f"no free port in {lo}-{hi}; pass --port to choose one explicitly")
+        "no free port among {} -- all in use. "
+        "Pass --port to choose one explicitly.".format(
+            ", ".join(map(str, DEFAULT_CANDIDATES))))

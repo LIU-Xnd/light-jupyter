@@ -86,7 +86,8 @@ persistence, address discovery.
 See [light_jupyter/README.md](light_jupyter/README.md) for the full reference:
 the rule of every flag, why the shell uses `pty.openpty()` instead of
 `pty.fork()`, why the terminal had to be xterm.js rather than a `<pre>` full
-of escape bytes, and why `--port` scans below the ephemeral range.
+of escape bytes, and how `--port` auto-picks only among ports the lab
+firewall actually admits.
 
 ```
 light_jupyter/

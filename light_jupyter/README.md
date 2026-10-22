@@ -76,19 +76,18 @@ to the passwd entry via `pwd.getpwnam()`.
 
 ### Port auto-selection
 
-`--port` defaults to auto: scan **1024–32767** and take the first free port
-(random starting point, so repeated launches spread out instead of colliding on
-the same number). Privileged and well-known ports (`22`, `25`, `53`, `445`, …)
-are skipped.
+`--port` defaults to auto: take the first free port among the ones this
+network actually admits (currently **8890**, then **9999**).
 
-The scan deliberately stays **below 32768**. `bind(port=0)` would hand back
-something in the OS ephemeral range, and that range is not reachable from
-clients on this network — measured: 37233 and 46361 both time out while 8890
-and 9999 both answer.
+Why not scan or let the kernel assign? Measured from the client segment on
+2026-10-22, the lab firewall drops inbound TCP for almost every port (1024,
+3000, 5000, 7000, 8000, 8080, 8500, 8800, 9000, 10000+, 15000, 20410, 25000,
+30000, 32000 and the whole ephemeral range all time out); only specific
+administratively opened ports (8890, 9999) admit connections. A randomly
+picked port yields a healthy server that no browser can reach. Pass `--port`
+explicitly to override.
 
-The port is read back off `sock.getsockname()[1]` rather than trusted from the
-input, and the socket is bound directly instead of via `app.listen()`, so a
-port taken in between reports cleanly:
+A port taken in between still reports cleanly:
 
 ```
 cannot bind 0.0.0.0:20410 (Address already in use).  Another light_jupyter

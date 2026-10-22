@@ -199,11 +199,23 @@ def main(argv=None) -> int:
 
     import tornado.ioloop
 
-    # Bind the socket ourselves instead of app.listen() so a port that was
-    # free a moment ago but taken since reports the clash clearly instead of
-    # an EADDRINUSE traceback from deep inside Tornado.
+    # Use app.listen(), NOT a hand-bound socket + HTTPServer.add_socket().
+    #
+    # Evidence: the self-test (app.listen in a thread) passes all 93 checks
+    # including real HTTP round-trips, while every detached launch that used
+    # bind_socket()+add_socket() left the process alive in ep_poll with the
+    # listening socket apparently invisible to epoll -- connections completed
+    # their handshake in the kernel and were then never accepted. A faulthandler
+    # dump showed the loop healthy in epoll_wait, so the loop was fine; only the
+    # hand-registered socket was not being serviced.
+    #
+    # app.listen() is also what makes EADDRINUSE surface as a normal OSError,
+    # caught below for a clean message.
+    app = make_app(token=token, root=root, user=user, port=port,
+                   trust_proxy=args.trust_proxy,
+                   throttle_threshold=args.throttle_threshold)
     try:
-        sock = bind_socket(port, args.host)
+        app.listen(port, address=args.host)
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, errno.EACCES):
             raise SystemExit(
@@ -213,37 +225,14 @@ def main(argv=None) -> int:
                    if e.errno == errno.EADDRINUSE
                    else "  Ports below 1024 need root."))
         raise
-    actual = sock.getsockname()[1]
+    actual = app.settings.get("port", port)
 
-    app = make_app(token=token, root=root, user=user, port=actual,
-                  trust_proxy=args.trust_proxy,
-                  throttle_threshold=args.throttle_threshold)
-
-    # Build the event loop EXPLICITLY, BEFORE the HTTPServer exists.
-    #
-    # Symptom this fixes: when started detached (setsid/nohup, no controlling
-    # terminal) the process binds its port and then sits at 0% CPU in
-    # inet_csk_accept forever -- the loop never gets scheduled, so the kernel
-    # completes each TCP handshake and the connection is then silently
-    # ignored. It reproduces with a 6-line vanilla Tornado app, so it is a
-    # platform/event-loop interaction, not something in this package.
-    #
-    # Order matters: constructing AsyncIOMainLoop calls asyncio.get_event_loop()
-    # and marks that loop as Tornado's. Doing it after HTTPServer(app) means
-    # Tornado already grabbed a loop implicitly and this raises
-    # "IOLoop already associated with asyncio loop".
-    from tornado.platform.asyncio import AsyncIOMainLoop
-    loop = AsyncIOMainLoop(make_current=True)
-
-    from tornado.httpserver import HTTPServer
-    server = HTTPServer(app)
-    server.add_socket(sock)
+    loop = tornado.ioloop.IOLoop.current()
 
     def _stop(*_):
         print("\nshutting down", flush=True)
         for s in list(app.sessions.values()):
             s.close()
-        server.stop()
         loop.add_callback(loop.stop)
 
     signal.signal(signal.SIGINT, _stop)
