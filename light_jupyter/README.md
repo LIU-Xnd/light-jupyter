@@ -76,16 +76,9 @@ to the passwd entry via `pwd.getpwnam()`.
 
 ### Port auto-selection
 
-`--port` defaults to auto: take the first free port among the ones this
-network actually admits (currently **8890**, then **9999**).
-
-Why not scan or let the kernel assign? Measured from the client segment on
-2026-10-22, the lab firewall drops inbound TCP for almost every port (1024,
-3000, 5000, 7000, 8000, 8080, 8500, 8800, 9000, 10000+, 15000, 20410, 25000,
-30000, 32000 and the whole ephemeral range all time out); only specific
-administratively opened ports (8890, 9999) admit connections. A randomly
-picked port yields a healthy server that no browser can reach. Pass `--port`
-explicitly to override.
+`--port` defaults to auto: scan **1024–32767** from a random starting point
+and take the first free port. Privileged and well-known ports (`22`, `25`,
+`53`, `445`, …) are skipped.
 
 A port taken in between still reports cleanly:
 

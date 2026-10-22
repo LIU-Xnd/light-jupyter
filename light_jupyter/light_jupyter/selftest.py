@@ -211,7 +211,7 @@ def main() -> int:
 
     print()
     print("=== 5. port auto-detection ===")
-    from .ports import (DEFAULT_CANDIDATES, RESERVED, bind_socket, is_port_free,
+    from .ports import (LO, HI, RESERVED, bind_socket, is_port_free,
                         parse_port, pick_port)
 
     check("parse_port: empty -> auto", parse_port("") is None)
@@ -233,13 +233,10 @@ def main() -> int:
 
     check("is_port_free: unused high port", is_port_free(47999))
 
-    # the chosen port must be real, free and bindable; auto-pick draws from
-    # DEFAULT_CANDIDATES (the ports the lab firewall admits), see ports.py
+    # the chosen port must be real, in the scanned range, and bindable
     got = pick_port("127.0.0.1")
     check("pick_port returns a valid port",
-          isinstance(got, int) and 1024 < got <= 65535, str(got))
-    check("pick_port comes from DEFAULT_CANDIDATES",
-          got in DEFAULT_CANDIDATES, str(got))
+          isinstance(got, int) and LO <= got <= HI, str(got))
     check("pick_port skips RESERVED ports", got not in RESERVED, str(got))
     check("pick_port result is actually free",
           is_port_free(got, "127.0.0.1"), str(got))
@@ -259,14 +256,14 @@ def main() -> int:
     check("bind_socket(0) yields a real ephemeral port",
           1024 < eph <= 65535, str(eph))
 
-    # when the first candidate is taken, the next candidate is offered
-    s4 = bind_socket(DEFAULT_CANDIDATES[0], "127.0.0.1")
-    nxt = pick_port("127.0.0.1")
-    check("pick_port falls through to the next candidate",
-          nxt in DEFAULT_CANDIDATES[1:], str(nxt))
-    s4.close()
-    check("pick_port recovers after the blocker goes away",
-          pick_port("127.0.0.1") == DEFAULT_CANDIDATES[0])
+    # an explicit start is honoured when it is inside the scanned range, and
+    # an out-of-range start wraps back into it
+    inside = pick_port("127.0.0.1", start=25000)
+    check("pick_port honours a start inside the range",
+          inside == 25000, str(inside))
+    outside = pick_port("127.0.0.1", start=47990)
+    check("pick_port wraps an out-of-range start back in",
+          LO <= outside <= HI, str(outside))
 
     # well-known service ports stay off the auto-pick path
     check("RESERVED excludes ssh/rdp-ish ports",

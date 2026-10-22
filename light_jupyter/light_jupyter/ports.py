@@ -1,15 +1,17 @@
 """Port selection.
 
-``--port`` accepts a number, or empty/auto meaning "pick for me".
+``--port`` accepts a number, or empty/auto meaning "pick for me": scan
+1024-32767 from a random starting point and take the first free port.
 
-Auto-pick used to scan 1024-32767 or let the kernel assign one. Measurement
-on 2026-10-22 killed both ideas: the lab firewall admits inbound TCP only on
-specific administratively opened ports (see pick_port), so a random port
-produces a server that runs fine but that no client can reach.
+Note for restricted networks: if the printed URL never loads from your
+client machine, the upstream ACLs may be dropping the port (measured on one
+lab network 2026-10-22: only a handful of ports admitted). In that case
+pass ``--port`` with a port your network allows.
 """
 
 from __future__ import annotations
 
+import random
 import socket
 from typing import Optional
 
@@ -17,8 +19,7 @@ from typing import Optional
 # would collide with the SSH daemon / system services in confusing ways.
 RESERVED = frozenset({22, 25, 53, 111, 123, 389, 445, 636, 1433, 3306})
 
-# Ports measured open on the lab firewall (see pick_port docstring).
-DEFAULT_CANDIDATES = (8890, 9999)
+LO, HI = 1024, 32767
 
 
 def parse_port(text: Optional[str]) -> Optional[int]:
@@ -64,25 +65,23 @@ def bind_socket(port: int, host: str = "0.0.0.0") -> socket.socket:
 
 
 def pick_port(host: str = "0.0.0.0", start: Optional[int] = None) -> int:
-    """Return a free port from the ports this network actually admits.
+    """Scan LO-HI from a random start and return the first free port.
 
-    Measured 2026-10-22 from the client segment: inbound TCP is dropped for
-    almost every port -- 1024, 3000, 5000, 7000, 8000, 8080, 8500, 8800,
-    9000, 10000, 11000, 15000, 20410, 25000, 30000, 32000, 37233 and 46361
-    all TIME OUT, while 9999 answers RST (nothing listening) and 8890 serves
-    HTTP. So admission is per-port (administratively opened), not a range,
-    and a random scan would almost always land on a black hole: the server
-    runs fine but no client can ever connect.
+    The scan deliberately stays below the OS ephemeral range: ``bind(0)``
+    would hand back something in 32768+, which is both less predictable to
+    share and, on some lab networks, sits in a dropped-by-ACL range.
 
-    The auto choice is therefore the first free port among the known-open
-    ones. Pass --port explicitly to override.
+    ``start`` picks the scan's first port (random by default) so repeated
+    launches do not all queue up behind the same number.
     """
-    for p in DEFAULT_CANDIDATES:
+    if start is None:
+        start = random.randint(LO, HI - 1)
+    span = HI - LO
+    for i in range(span):
+        p = LO + ((start - LO + i) % span)
         if p in RESERVED:
             continue
         if is_port_free(p, host):
             return p
     raise RuntimeError(
-        "no free port among {} -- all in use. "
-        "Pass --port to choose one explicitly.".format(
-            ", ".join(map(str, DEFAULT_CANDIDATES))))
+        f"no free port in {LO}-{HI}; pass --port to choose one explicitly")
