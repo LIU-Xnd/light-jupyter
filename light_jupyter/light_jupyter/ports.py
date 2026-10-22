@@ -11,6 +11,7 @@ pass ``--port`` with a port your network allows.
 
 from __future__ import annotations
 
+import random
 import socket
 from typing import Optional
 
@@ -19,9 +20,6 @@ from typing import Optional
 RESERVED = frozenset({22, 25, 53, 111, 123, 389, 445, 636, 1433, 3306})
 
 LO, HI = 1024, 32767
-
-# Ports measured open on the lab firewall (see pick_port docstring).
-DEFAULT_CANDIDATES = (8890, 9999)
 
 
 def parse_port(text: Optional[str]) -> Optional[int]:
@@ -67,23 +65,25 @@ def bind_socket(port: int, host: str = "0.0.0.0") -> socket.socket:
 
 
 def pick_port(host: str = "0.0.0.0", start: Optional[int] = None) -> int:
-    """Return a free port from the ports this network actually admits.
+    """Scan LO-HI from a random start and return the first free port.
 
-    start is accepted (and ignored) for backwards compatibility.
+    ``start`` picks the scan's first port (random by default) so repeated
+    launches do not all queue up behind the same number.
 
-    Measured twice from the client segment on 2026-10-22, most recently as a
-    full 1-65535 scan: inbound TCP is dropped for 65,529 of 65,535 ports
-    (zero RSTs -- the drops are an upstream ACL, per-port, not a range),
-    while 8890 and 9999 answer. A randomly scanned port produces a healthy
-    server that no client can ever reach, which is precisely the "the server
-    runs but the browser cannot connect" report. Pass --port to override.
+    Known caveat, measured on one lab network 2026-10-22 (full 1-65535 scan,
+    twice): the inter-zone gateway drops inbound TCP for every port except a
+    fixed set (8787 8888 8890 8891 8895 9999), regardless of what listens.
+    On such a network pass --port with an admitted port; elsewhere the free
+    scan is the right default.
     """
-    for p in DEFAULT_CANDIDATES:
+    if start is None:
+        start = random.randint(LO, HI - 1)
+    span = HI - LO
+    for i in range(span):
+        p = LO + ((start - LO + i) % span)
         if p in RESERVED:
             continue
         if is_port_free(p, host):
             return p
     raise RuntimeError(
-        "no free port among {} -- all in use. "
-        "Pass --port to choose one explicitly.".format(
-            ", ".join(map(str, DEFAULT_CANDIDATES))))
+        f"no free port in {LO}-{HI}; pass --port to choose one explicitly")
