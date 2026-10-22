@@ -120,26 +120,33 @@ class Session:
         return not self.closed and self.proc.poll() is None
 
     def close(self) -> None:
+        """Shut the session down. Must stay FAST: it runs inside lj's
+        ctrl-c signal handler, once per open session.
+
+        Interactive bash ignores SIGTERM (documented behaviour), so a
+        TERM-then-wait(3) close took the full three seconds per session and
+        made shutdown crawl. Order here instead: close the PTY master first
+        (that hangs up the shell and unblocks any reader), then SIGKILL the
+        process group -- KILL cannot be ignored, so the wait below returns
+        in milliseconds.
+        """
         if self.closed:
             return
         self.closed = True
         try:
-            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                self.proc.terminate()
-            except Exception:
-                pass
-        try:
-            self.proc.wait(timeout=3)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-        try:
             os.close(self.master)
         except OSError:
+            pass
+        try:
+            os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+        try:
+            self.proc.wait(timeout=1)
+        except Exception:
             pass
 
 

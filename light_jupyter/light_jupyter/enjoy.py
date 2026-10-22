@@ -176,11 +176,14 @@ class ManagedSshd:
         self.port = port
 
     def stop(self):
+        """Terminate the managed sshd. Called from lj's ctrl-c handler, so
+        bounded: TERM, one second to exit, then KILL. sshd's master exits
+        promptly on TERM."""
         if self.proc.poll() is not None:
             return
         try:
             self.proc.terminate()
-            self.proc.wait(timeout=3)
+            self.proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             self.proc.kill()
         except OSError:
