@@ -83,6 +83,7 @@ def parse_ss_listeners(text: str) -> list:
 
 def ensure_keypair(keygen: str, key_path: Path):
     """Return (priv_text, pub_text, note); create the pair only once."""
+    key_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     pub_path = key_path.with_suffix(key_path.suffix + ".pub")
     if key_path.exists() and pub_path.exists():
         return (key_path.read_text(), pub_path.read_text(),
