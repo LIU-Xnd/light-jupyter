@@ -266,7 +266,18 @@ def main(argv=None) -> int:
         atexit.register(enjoy_handle.stop)   # belt and braces
 
     loop.start()
-    return 0
+
+    # Everything is already closed in _stop(); exit hard rather than risk
+    # hanging in interpreter teardown (stray PTY reader threads or executor
+    # workers can otherwise keep a non-daemon thread alive forever, which is
+    # exactly the "ctrl-c and it never exits" symptom).
+    if enjoy_handle is not None:
+        enjoy_handle.stop()
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    os._exit(0)
 
 
 if __name__ == "__main__":
