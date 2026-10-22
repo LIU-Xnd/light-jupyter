@@ -24,6 +24,8 @@ git clone https://github.com/LIU-Xnd/light-jupyter.git
 python3 -m pip install -e ./light-jupyter/light_jupyter
 ```
 
+> Linux only (real PTY + sshd); the CLI will not start on Windows/macOS.
+
 That is the whole thing. It picks a free port, serves your home directory,
 mints (or reuses) a token, and prints the URL. The host part of the URL is
 the first non-loopback IPv4 on the machine, read from `ip addr` — nothing is

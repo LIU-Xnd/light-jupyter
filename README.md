@@ -30,6 +30,8 @@ git clone https://github.com/LIU-Xnd/light-jupyter.git
 python3 -m pip install -e ./light-jupyter/light_jupyter
 ```
 
+> Linux only (real PTY + sshd); the CLI will not start on Windows/macOS.
+
 ## Run
 
 ```bash
