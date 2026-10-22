@@ -16,13 +16,13 @@ v0.x and earlier   the browser connected straight to the server, so the
 
 ## Two halves
 
-**`light_jupyter_server/`** — the web IDE. Linux only (real PTY, sshd);
+**`light_jupyter_server/`** — the web IDE. Linux only (real PTY);
 depends on tornado. Also provides the `gateway` that dials out to the client.
 
 **`light_jupyter_client/`** — the browser-side end of the egress-only
-tunnel. Standard library only, so it runs on Windows, macOS and Linux. The
-browser talks to `http://127.0.0.1:<port>`; nothing is exposed to the
-network.
+tunnel. **Windows client** (tested on Windows 11), standard library only, so
+nothing needs installing. The browser talks to
+`http://127.0.0.1:<port>`; nothing is exposed to the network.
 
 ## Install
 

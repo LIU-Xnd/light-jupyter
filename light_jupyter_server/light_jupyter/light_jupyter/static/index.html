@@ -25,7 +25,6 @@
     <span class="brand">light_jupyter</span>
     <span class="spacer"></span>
     <span id="info" class="info"></span>
-    <button id="enjoy" class="warn-btn" title="set up ssh for this machine — runs a small sshd on the server that stops with light_jupyter">⚠ ssh</button>
     <span id="conn" class="pill">connecting…</span>
   </header>
 
@@ -80,38 +79,6 @@
 
 <input id="filepick" type="file" hidden>
 
-<div id="enjoy-modal" class="modal hidden">
-  <div class="modal-card">
-    <h2><span class="warn">⚠</span> one-click ssh setup</h2>
-    <p id="enjoy-msg" class="enjoy-msg"></p>
-    <div id="enjoy-body" class="hidden">
-      <p class="dim">⚠ this starts a small sshd on the server; it stops
-         automatically when light_jupyter stops. The key only opens this box.</p>
-      <ol>
-        <li>save the private key:
-          <button id="enjoy-dl">⬇ id_light_jupyter</button></li>
-        <li>paste this into a terminal on <b>your</b> machine
-            (<span id="enjoy-os">Windows PowerShell</span>):
-          <pre id="enjoy-cmd" class="cmdbox"></pre>
-          <button id="enjoy-copy">copy</button>
-          <button id="enjoy-sys">show Linux/macOS</button></li>
-      </ol>
-      <p>done? then just: <code id="enjoy-hint" class="hint">ssh light_jupyter</code></p>
-      <button id="enjoy-stop" class="danger">■ stop enjoying — remove sshd &amp; keys</button>
-    </div>
-    <div id="enjoy-undo" class="hidden">
-      <p class="ok-msg">✓ stopped: managed sshd is down and the server-side
-         files are removed (<span id="enjoy-removed">0</span>).</p>
-      <p>clean your machine (<span id="enjoy-undo-os">Windows PowerShell</span>)
-         — deletes the local key and the config block:</p>
-      <pre id="enjoy-undo-cmd" class="cmdbox"></pre>
-      <button id="enjoy-undo-copy">copy</button>
-      <button id="enjoy-undo-sys">show Linux/macOS</button>
-      <p class="dim">to use ssh again, click ⚠ ssh to set up a fresh key.</p>
-    </div>
-    <button id="enjoy-close">close</button>
-  </div>
-</div>
 
 <script src="/static/vendor/xterm.js"></script>
 <script src="/static/app.js"></script>

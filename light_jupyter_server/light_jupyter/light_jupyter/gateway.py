@@ -29,6 +29,7 @@ This module never listens for inbound traffic.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import os
@@ -73,8 +74,14 @@ def load_or_make_secret(path: str) -> bytes:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as fh:
         fh.write(s)
+    log("")
     log(f"  secret created: {path}")
-    log(f"  copy it to the browser machine:  scp <this-host>:{path} .")
+    log("")
+    log("  copy this ONE line to the browser machine and run it there:")
+    log("")
+    log(f"    echo {base64.b64encode(s).decode()} | base64 -d "
+        f"> secret_light_jupyter && chmod 400 secret_light_jupyter")
+    log("")
     return s
 
 

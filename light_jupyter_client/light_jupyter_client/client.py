@@ -66,8 +66,12 @@ def load_secret(path: str) -> bytes:
             continue
     raise SystemExit(
         f"no shared secret found (looked in {path} and the cwd).\n"
-        "  one-time setup -- copy it from the server:\n"
-        "    scp <server>:~/.light_jupyter/secret_light_jupyter .")
+        "\n"
+        "  the server prints a one-liner on its first run. copy it here:\n"
+        "\n"
+        "    echo <BASE64> | base64 -d > secret_light_jupyter\n"
+        "    icacls secret_light_jupyter /inheritance:r"
+        " /grant:r \"%USERNAME%:R\"\n")
 
 
 def hello_mac(secret: bytes, ts: int) -> bytes:

@@ -40,3 +40,7 @@ Thumbs.db
 # light_jupyter_client/ (kept only because a shell may hold the directory).
 # Anchored to the root so it cannot match light_jupyter_server/light_jupyter/.
 /light_jupyter/
+
+# the tunnel secret, pasted in by hand on each machine
+light_jupyter_client/secret_light_jupyter
+light_jupyter_server/secret_light_jupyter

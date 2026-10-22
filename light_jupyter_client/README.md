@@ -3,6 +3,10 @@
 The browser-side end of an **egress-only** reverse tunnel for
 [light_jupyter_server](../light_jupyter_server).
 
+> **Windows is the supported client platform.** It is developed and tested on
+> Windows 11; it needs no Python packages beyond the standard library, and
+> `python` on Windows is enough.
+
 Assumption this package is built around: **the server has no inbound port
 open — outbound only.** So the server cannot be reached by a browser, and
 nothing here ever connects to it. The server dials *us*.
@@ -26,22 +30,22 @@ to use it as well.
 
 ## Install
 
-No dependencies — standard library only, so it runs on Windows, macOS and
-Linux alike:
+On Windows, no dependencies — the standard library only:
 
-```bash
-python3 -m pip install -e .
+```powershell
+cd path\to\light_jupyter_client
+python -m pip install -e .
 # or just run it in place
 python -m light_jupyter_client
 ```
 
 ## Use
 
-Run this on **both** machines — the browser's, and the server's. The server
-has no inbound port, so the server dials *you*; all you do is hand it your
-address once (a beacon cannot work: inbound UDP is filtered here too).
+Run this on **both** machines — the browser's (Windows), and the server's. The
+server has no inbound port, so the server dials *you*; all you do is hand it
+your address once (a beacon cannot work: inbound UDP is filtered here too).
 
-**1. On the browser machine** (Windows / macOS / Linux):
+**1. On the Windows machine** (where the browser is):
 
 ```bash
 python -m light_jupyter_client
@@ -60,12 +64,21 @@ It prints your address and one line to copy:
     python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port <LJ-PORT>
 ```
 
-**2. Copy the shared secret to this machine** (one-time; the server creates
-it on first run):
+**2. Move the shared secret to this machine** (one-time; the server prints a
+single command on its first run). No `scp`, nothing to type by hand — copy
+that one line and run it here:
 
-```bash
-scp <server>:~/.light_jupyter/secret_light_jupyter .
+```powershell
+# the server prints something like this on first run:
+#   echo aGVsbG8... | base64 -d > secret_light_jupyter && chmod 400 secret_light_jupyter
+#
+# run it on Windows in this directory:
+echo aGVsbG8... | base64 -d > secret_light_jupyter
+icacls secret_light_jupyter /inheritance:r /grant:r "%USERNAME%:R"
 ```
+
+That writes `secret_light_jupyter` read-only. The client reads it from the
+current directory, so run it from here (or pass `--secret-file`).
 
 **3. On the server**, paste the line from step 1 and fill in `<LJ-PORT>`
 with the port its banner shows (the random one is fine — the tunnel makes it

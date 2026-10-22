@@ -197,41 +197,6 @@ class InfoHandler(TokenMixin, tornado.web.RequestHandler):
         })
 
 
-class EnjoyHandler(TokenMixin, tornado.web.RequestHandler):
-    """POST /api/enjoy — one-click ssh setup for the browser's machine.
-
-    Ensures the managed sshd is up (started at boot with --enjoy, or started
-    here on first click) and returns everything the page needs: the private
-    key, a commented ssh-config block and ready-made one-liners. The host is
-    taken from the request's Host header, i.e. the address the browser is
-    actually using, so it is right by construction.
-    """
-
-    def post(self):
-        if not self.require_token():
-            return
-        from . import enjoy
-        body = json.loads(self.request.body or b"{}")
-        op = body.get("op", "start")
-        host = self.request.host.split(":")[0] or "127.0.0.1"
-        user = self.application.current_user
-        try:
-            if op == "stop":
-                removed = enjoy.stop_and_clean()
-                self.finish({"ok": True, "stopped": True,
-                             "removed": removed, "host": host, "user": user,
-                             "undo_win": enjoy.render_windows_undo(),
-                             "undo_posix": enjoy.render_posix_undo(),
-                             "hint": "click ⚠ ssh again to enable it afresh"})
-                return
-            handle = enjoy.get_or_start()
-        except SystemExit as e:
-            self.set_status(400)
-            self.finish({"error": str(e)})
-            return
-        self.finish(handle.payload(host, user))
-
-
 # ---------------------------------------------------------------- websocket
 
 class TerminalWS(TokenMixin, tornado.websocket.WebSocketHandler):
@@ -344,7 +309,6 @@ def make_app(token: str, root: str, user: str, port: int,
             (r"/", IndexHandler),
             (r"/ws", TerminalWS),
             (r"/api/info", InfoHandler),
-            (r"/api/enjoy", EnjoyHandler),
             (r"/api/list", ListHandler),
             (r"/api/read", ReadHandler),
             (r"/api/write", WriteHandler),
