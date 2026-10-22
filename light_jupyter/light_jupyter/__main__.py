@@ -159,14 +159,12 @@ def main(argv=None) -> int:
     user = args.user or getpass.getuser()
 
     # --enjoy brings up a managed sshd that lives exactly as long as this
-    # process: started below, killed in _stop() (ctrl-c / SIGTERM).
+    # process: started below, killed in _stop() (ctrl-c / SIGTERM). The web
+    # UI's ⚠ button reuses the same instance (enjoy.get_or_start).
     enjoy_handle = None
     if args.enjoy:
-        from .enjoy import prepare as enjoy_prepare
-        adv_host = args.host if args.host not in ("0.0.0.0", "", None) \
-            else local_ipv4()
-        enjoy_handle = enjoy_prepare(adv_host, user,
-                                     advertise_port=args.enjoy_port)
+        from .enjoy import get_or_start as enjoy_start
+        enjoy_handle = enjoy_start(advertise_port=args.enjoy_port)
 
     token, token_note, _created = resolve_token(args)
     root = os.path.abspath(os.path.expanduser(args.root)) if args.root \

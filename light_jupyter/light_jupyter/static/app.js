@@ -449,4 +449,60 @@ window.addEventListener("resize", () => {
   syncTermSize();
 });
 
+// ---------------------------------------------------------------- ⚠ enjoy
+// One click: the server brings up its managed sshd and hands us the key +
+// a ready-made one-liner; the user saves the key, pastes, runs
+// `ssh light_jupyter`.
+
+let ENJOY = null;          // last /api/enjoy payload
+let ENJOY_SYS = "win";     // which one-liner is shown
+
+function downloadKey() {
+  const bin = atob(ENJOY.key_b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: "text/plain" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = ENJOY.key_name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function showEnjoySys(sys) {
+  ENJOY_SYS = sys;
+  $("enjoy-cmd").textContent = sys === "win" ? ENJOY.win_cmd : ENJOY.posix_cmd;
+  $("enjoy-os").textContent = sys === "win" ? "Windows PowerShell" : "Linux / macOS";
+  $("enjoy-sys").textContent = sys === "win" ? "show Linux/macOS" : "show Windows";
+}
+
+$("enjoy").onclick = async () => {
+  $("enjoy-modal").classList.remove("hidden");
+  $("enjoy-msg").textContent = "starting the managed sshd…";
+  $("enjoy-msg").style.color = "var(--dim)";
+  $("enjoy-body").classList.add("hidden");
+  try {
+    ENJOY = await postJSON("/api/enjoy", {});
+    $("enjoy-msg").textContent =
+      `managed sshd is up on ${ENJOY.host}:${ENJOY.port} ` +
+      "(stops with light_jupyter). two steps on your machine:";
+    $("enjoy-msg").style.color = "";
+    $("enjoy-body").classList.remove("hidden");
+    ENJOY_SYS = /Win/i.test(navigator.userAgent) ? "win" : "posix";
+    showEnjoySys(ENJOY_SYS);
+  } catch (err) {
+    $("enjoy-msg").textContent = "⚠ " + err.message;
+    $("enjoy-msg").style.color = "var(--bad)";
+  }
+};
+
+$("enjoy-close").onclick = () => $("enjoy-modal").classList.add("hidden");
+$("enjoy-dl").onclick = downloadKey;
+$("enjoy-sys").onclick = () => showEnjoySys(ENJOY_SYS === "win" ? "posix" : "win");
+$("enjoy-copy").onclick = () => {
+  const cmd = ENJOY_SYS === "win" ? ENJOY.win_cmd : ENJOY.posix_cmd;
+  navigator.clipboard.writeText(cmd).then(
+    () => { $("enjoy-copy").textContent = "copied ✓";
+            setTimeout(() => { $("enjoy-copy").textContent = "copy"; }, 1500); },
+    () => alert("copy failed — select the text manually"));
+};
+
 boot();

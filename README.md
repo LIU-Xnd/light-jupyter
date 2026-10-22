@@ -7,8 +7,9 @@ single port, from any browser:
 - an SFTP-style file browser (upload, download, mkdir, rename, delete)
 - an editor pane that is read-only until you press **edit**
 
-With `--enjoy` it also runs an sshd instance whose lifetime is bound to the
-server's — so plain `ssh light_jupyter` works alongside the browser session.
+With `--enjoy` — or one click on the **⚠ ssh** button in the web UI — it also
+runs an sshd instance whose lifetime is bound to the server's, so plain
+`ssh light_jupyter` works alongside the browser session.
 
 No Jupyter kernel, no notebook server, no X11.
 

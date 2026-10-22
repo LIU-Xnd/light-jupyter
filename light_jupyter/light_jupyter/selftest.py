@@ -502,6 +502,34 @@ def main() -> int:
     check("enjoy: sftp subsystem omitted when the binary is absent",
           "Subsystem" not in cfg_nosftp, "stale sftp line")
 
+    from .enjoy import build_payload as _bp
+    pay = _bp("192.0.2.10", "me", 20410, tmp_home)
+    check("enjoy: api payload carries host/port/user + base64 key",
+          pay["host"] == "192.0.2.10" and pay["port"] == 20410
+          and pay["user"] == "me"
+          and _b64.b64decode(pay["key_b64"]).decode() == priv, "payload wrong")
+    check("enjoy: api payload embeds both ready-made one-liners",
+          "ssh light_jupyter" in pay["win_cmd"]
+          and "ssh light_jupyter" in pay["posix_cmd"]
+          and pay["hint"] == "ssh light_jupyter", "one-liners missing")
+
+    pats = []
+    for group in th_app.handlers:
+        for spec in group[1]:
+            pats.append(str(spec.matcher.pattern))
+    check("enjoy: /api/enjoy route is registered (web button path)",
+          any("/api/enjoy" in p for p in pats), str(pats))
+    check("enjoy: enjoy button + modal are wired into the page",
+          "enjoy-modal" in open(os.path.join(
+              os.path.dirname(os.path.abspath(
+                  __import__("light_jupyter.server").__file__)),
+              "static", "index.html"), encoding="utf-8").read()
+          and 'id="enjoy"' in open(os.path.join(
+              os.path.dirname(os.path.abspath(
+                  __import__("light_jupyter.server").__file__)),
+              "static", "app.js"), encoding="utf-8").read(),
+          "static assets missing the enjoy wiring")
+
     win = render_windows("192.0.2.10", 22, "me", priv)
     check("enjoy: windows block writes via FromBase64String",
           "FromBase64String(" in win, "missing b64 writer")

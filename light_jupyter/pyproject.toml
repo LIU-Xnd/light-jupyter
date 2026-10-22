@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "light-jupyter"
-version = "0.3.0"
+version = "0.4.0"
 description = "A lightweight token-gated web IDE: terminal + SFTP over one port"
 readme = "README.md"
 requires-python = ">=3.7"

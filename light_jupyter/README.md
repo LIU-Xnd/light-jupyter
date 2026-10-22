@@ -93,14 +93,17 @@ may already be running; stop it or leave --port empty for auto.
 
 ## --enjoy: sshd that lives and dies with light_jupyter
 
-    python -m light_jupyter --enjoy
+Two ways in:
 
-Starts the web IDE *and* a dedicated sshd instance, then prints copy-paste
-blocks for Windows (PowerShell), Linux and macOS that save the private key
-to the local `~/.ssh/id_light_jupyter` (read-only) and add a commented
-`Host light_jupyter` block to the local ssh config — so `ssh light_jupyter`
-just works. When you stop light_jupyter (ctrl-c / SIGTERM), the sshd dies
-with it.
+  * `python -m light_jupyter --enjoy` — set up at startup, blocks printed to
+    the terminal.
+  * the **⚠ ssh** button in the web UI — click it and the server brings up
+    the same managed sshd on the spot, then the page walks you through the
+    local side: download the private key, copy the one-liner for your OS
+    (auto-detected), run it, and `ssh light_jupyter` just works. The host in
+    the generated config is the address your browser is actually using, so
+    it is right by construction. Both paths share one sshd instance, and it
+    stops when light_jupyter stops (ctrl-c / SIGTERM / atexit).
 
 The system sshd is never touched: no `/etc/ssh/sshd_config` edits, no
 reloads. The managed instance is a child process with its own port, host key

@@ -186,6 +186,10 @@ class ManagedSshd:
         except OSError:
             pass
 
+    def payload(self, ip: str, user: str) -> dict:
+        """Everything the web UI needs to finish the local side."""
+        return build_payload(ip, user, self.port, Path.home())
+
     def print_setup(self, ip: str, user: str):
         priv = (Path.home() / ".ssh" / KEY_NAME).read_text()
         print()
@@ -206,8 +210,41 @@ class ManagedSshd:
         print(f"  Then: ssh {MARKER}")
 
 
-def prepare(ip: str, user: str,
-            advertise_port: Optional[int] = None) -> ManagedSshd:
+def build_payload(ip: str, user: str, port: int, home: Path) -> dict:
+    """Assemble the JSON body for POST /api/enjoy (and for tests)."""
+    priv = (home / ".ssh" / KEY_NAME).read_text()
+    return {
+        "host": ip,
+        "port": port,
+        "user": user,
+        "key_name": KEY_NAME,
+        "key_b64": base64.b64encode(priv.encode()).decode(),
+        "config_block": config_block(ip, port, user),
+        "win_cmd": render_windows(ip, port, user, priv),
+        "posix_cmd": render_posix(ip, port, user, priv),
+        "hint": f"ssh {MARKER}",
+    }
+
+
+# One handle per process: --enjoy at startup and POST /api/enjoy share it,
+# so clicking the button never starts a second sshd.
+_current: Optional[ManagedSshd] = None
+
+
+def get_current() -> Optional[ManagedSshd]:
+    return _current
+
+
+def get_or_start(advertise_port: Optional[int] = None) -> ManagedSshd:
+    """Return the running managed sshd, starting it if needed."""
+    global _current
+    if _current is not None and _current.proc.poll() is None:
+        return _current
+    _current = prepare(advertise_port=advertise_port)
+    return _current
+
+
+def prepare(advertise_port: Optional[int] = None) -> ManagedSshd:
     """Set up keys and start the managed sshd. Raises SystemExit on trouble.
 
     Must only run on a POSIX box: it needs sshd, ssh-keygen and Unix perms.
