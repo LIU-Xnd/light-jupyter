@@ -220,6 +220,19 @@ def run_tunnel(args, token: str, root: str, user: str, host: str) -> int:
                    throttle_threshold=args.throttle_threshold)
     app.listen(lj_port, address="127.0.0.1")
 
+    # lj's IOLoop must be RUNNING. app.listen() only binds and registers the
+    # socket; without a loop servicing it the kernel still completes the
+    # gateway's connect() and the request then hangs forever with no error.
+    # The gateway owns the main thread (it blocks in connect), so lj runs in
+    # a daemon thread -- the same shape the self-test uses.
+    import threading
+    import time
+
+    import tornado.ioloop
+    loop = tornado.ioloop.IOLoop.current()
+    threading.Thread(target=loop.start, daemon=True).start()
+    time.sleep(0.5)
+
     browser_port = int(data.get("browser_port", 0)) or None
     url = f"http://127.0.0.1:{browser_port}/#token={token}" \
         if browser_port else f"http://127.0.0.1:{lj_port}/#token={token}"
