@@ -37,6 +37,7 @@ import os
 import queue
 import secrets
 import signal
+import threading
 import socket
 import sys
 import time
@@ -335,6 +336,39 @@ def local_addr() -> str:
         s.close()
 
 
+def _bind_or_explain(host: str, port: int):
+    """Bind, or say clearly which port is taken."""
+    from http.server import ThreadingHTTPServer
+    try:
+        return ThreadingHTTPServer((host, port), Handler)
+    except OSError as e:
+        if e.errno in (98, 48, 10048, 13):     # EADDRINUSE, Linux/mac/Win, or denied
+            raise SystemExit(
+                f"cannot bind {host}:{port} -- already in use.")
+        raise
+
+
+def _serves_our_page(host: str, port: int, timeout: float = 3.0) -> bool:
+    """True if a request to our own port comes back with our page.
+
+    Connect to whatever address the browser would use, not to 127.0.0.1:
+    a server bound to a specific non-loopback address is invisible on
+    loopback, so probing loopback would wrongly report a false failure.
+    """
+    import urllib.request
+    import urllib.error
+
+    probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    url = f"http://{probe}:{port}/"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError):
+        return False
+    # our page has a marker another server would not
+    return "lj.listen" in body or "<div id=\"log\">" in body
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -359,36 +393,74 @@ def main(argv=None) -> int:
         f"    lj dialer --target {me}:{args.port} --token {token}",
         "",
     ]
-    log("\n".join(banner))
-
     if args.print_only:
+        log("\n".join(banner))
         return 0
 
-    try:
-        srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    except OSError as e:
-        if e.errno in (98, 48, 10048):     # EADDRINUSE, Linux / macOS / Win
-            raise SystemExit(
-                f"cannot bind {args.host}:{args.port} -- already in use.")
-        raise
-
+    # Bind and prove the port is really ours BEFORE printing a URL the user
+    # is going to trust. On Windows two sockets can bind one port and the
+    # older process keeps the accept queue, so a bind that "succeeded" can
+    # still leave someone else answering -- which looks exactly like a
+    # broken lj. Printing first would leave a dead URL on screen after a
+    # failed check, and the user would copy it anyway.
+    srv = _bind_or_explain(args.host, args.port)
     srv.daemon_threads = True
 
+    # Serving has to start BEFORE the probe: nothing answers on the port
+    # until serve_forever() is running, so probing first would fail on
+    # every launch. The thread is a daemon and serve_forever() below
+    # replaces it, so the one started here is only for the probe window.
+    _t = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.3},
+                          daemon=True)
+    _t.start()
+
+    if not _serves_our_page(args.host, args.port):
+        srv.shutdown()
+        srv.server_close()
+        raise SystemExit(
+            f"bound {args.host}:{args.port} but something else is answering "
+            f"on it -- another process holds the port.\n"
+            f"  stop it, or start lj listen --port <another>")
+
+    log("\n".join(banner))
+    log("  ctrl-c to stop")
+    log("")
+
+
     def _stop(*_a) -> None:
+        """Ctrl-C / SIGTERM: stop accepting, release the port, leave.
+
+        Runs inside the signal handler, so everything is done
+        synchronously -- nothing here is deferred to a thread, because a
+        deferred shutdown would be racing the interpreter teardown.
+        """
         log("\nshutting down")
+        try:
+            srv.shutdown()          # returns once serve_forever() has stopped
+            srv.server_close()      # release the listening socket
+        except Exception:
+            pass
         try:
             sys.stdout.flush()
         except Exception:
             pass
+        # hard exit rather than trusting interpreter teardown: the request
+        # handler threads are non-daemon on some paths and can keep the
+        # process alive after 'shutting down' already printed, which reads
+        # as a hang rather than an exit.
         os._exit(0)
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
+    # serve_forever() is already running on the daemon thread; the main
+    # thread just waits so the signal handlers stay installed and
+    # responsive.
     try:
-        srv.serve_forever(poll_interval=0.3)
+        while _t.is_alive():
+            _t.join(0.5)
     except KeyboardInterrupt:
-        pass
+        _stop()
     return 0
 
 

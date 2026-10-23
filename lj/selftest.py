@@ -347,6 +347,78 @@ if _url:
           "lj dialer --target" in _out and "--token " + _tok in _out,
           _out[-200:])
 
+print("\n=== 6c. startup check and ctrl-c ===")
+# The port self-probe must run BEFORE the banner, so a port held by
+# someone else never leaves a URL on screen for the user to copy.
+_held = free_port()
+_thief = socket.socket()
+_thief.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+_thief.bind(("127.0.0.1", _held))
+_thief.listen(4)                      # holds the port, answers nothing like lj
+
+_r = subprocess.run([PY, "-m", "lj", "listen", "--port", str(_held),
+                     "--host", "127.0.0.1", "--token-file", str(tmp / "t6")],
+                    capture_output=True, text=True, timeout=30)
+_thief.close()
+check("a port held by another process is refused",
+      _r.returncode != 0, f"rc={_r.returncode}")
+_err = (_r.stderr or "") + (_r.stdout or "")
+check("it says who is holding the port", "already in use" in _err
+      or "something else is answering" in _err, _err[-160:])
+check("no browser URL is printed when the check fails",
+      "browser :" not in _err, _err[-160:])
+
+# ctrl-c must release the port, not linger
+import signal as _signal
+
+_ctrl_port = free_port()
+_kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+if os.name == "nt":
+    # Windows cannot deliver SIGINT from outside a process. CTRL_BREAK_EVENT
+    # is the equivalent, and it only reaches a child that has its own
+    # console process group.
+    _kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    _interrupt = _signal.CTRL_BREAK_EVENT
+else:
+    _interrupt = _signal.SIGINT
+
+_p = subprocess.Popen([PY, "-m", "lj", "listen", "--port", str(_ctrl_port),
+                       "--host", "127.0.0.1", "--token-file", str(tmp / "t7")],
+                      **_kwargs)
+deadline = time.time() + 20
+_up = False
+while time.time() < deadline:
+    if _p.poll() is not None:
+        break
+    try:
+        _s = socket.create_connection(("127.0.0.1", _ctrl_port), timeout=0.5)
+        _s.close(); _up = True; break
+    except OSError:
+        time.sleep(0.3)
+check("listen comes up", _up)
+
+if _up:
+    _p.send_signal(_interrupt)
+    try:
+        _p.wait(timeout=10)
+        # Windows reports STATUS_CONTROL_C_EXIT (0xC000013A) for a console
+        # interrupt; that is a normal stop, not a crash.
+        _rc = _p.returncode
+        check("ctrl-c exits", _rc in (0, -2, 0xC000013A, 3221225786)
+              or _rc is not None, f"rc={_rc}")
+    except subprocess.TimeoutExpired:
+        check("ctrl-c exits", False, "still running after 10s")
+        _p.kill()
+
+    time.sleep(0.5)
+    try:
+        _s = socket.socket()
+        _s.bind(("127.0.0.1", _ctrl_port))    # raises if still held
+        _s.close()
+        check("the port is released after ctrl-c", True)
+    except OSError as _e:
+        check("the port is released after ctrl-c", False, str(_e))
+
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)
