@@ -20,5 +20,5 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("light-jupyter-client")
 except Exception:
-    __version__ = "1.1.2"       # fallback when not installed as a distribution
+    __version__ = "1.2.0"       # fallback when not installed as a distribution
 __all__ = ["__version__"]

@@ -2,7 +2,7 @@
 
 Design notes
 ------------
-* The shell runs on the SAME box as light_jupyter, but we deliberately go
+* The shell runs on the SAME box as light_jupyter_server, but we deliberately go
   through paramiko's SSH transport rather than spawning a local pty. That
   keeps every session isolated in its own channel, gives us clean
   kill/disconnect semantics, and means the same code path works when the

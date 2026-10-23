@@ -1,6 +1,6 @@
-"""Self-test for light_jupyter — runs on the target box, no test framework.
+"""Self-test for light_jupyter_server — runs on the target box, no test framework.
 
-    python -m light_jupyter.selftest
+    python -m light_jupyter_server.selftest
 
 Checks the pieces that actually break: pty session, websocket round-trip,
 token gate, and the file API. Exits non-zero on the first hard failure.
@@ -31,7 +31,7 @@ def main() -> int:
     token = "selftest-token-abc123"
 
     print("=== 1. backend: Session over a real pty ===")
-    from light_jupyter.backend import FileSystem, Session
+    from light_jupyter_server.backend import FileSystem, Session
     sess = Session(user=os.environ.get("USER", "root"), cwd=root, cols=100, rows=30)
     time.sleep(0.6)
     sess.write("echo LJ_PTY_WORKS\n")
@@ -49,9 +49,9 @@ def main() -> int:
     print()
     print("=== 2. backend: FileSystem ===")
     fs = FileSystem(root)
-    fs.write_text("/hello.txt", "hello light_jupyter\n")
+    fs.write_text("/hello.txt", "hello light_jupyter_server\n")
     check("write+read roundtrip",
-          fs.read_text("/hello.txt").strip() == "hello light_jupyter")
+          fs.read_text("/hello.txt").strip() == "hello light_jupyter_server")
     entries = fs.listdir("/")
     check("listdir sees the file", any(e["name"] == "hello.txt" for e in entries))
     fs.mkdir("/sub/dir")
@@ -73,7 +73,7 @@ def main() -> int:
     print()
     print("=== 3. HTTP server: token gate + API ===")
     import threading
-    from light_jupyter.server import make_app
+    from light_jupyter_server.server import make_app
     import tornado.ioloop
 
     app = make_app(token=token, root=root, user="root", port=0,
@@ -133,7 +133,7 @@ def main() -> int:
     # GET / is the HTML shell, not JSON
     st, html = fetch("/", expect_json=False)
     check("GET / serves the HTML shell",
-          st == 200 and "light_jupyter" in html, f"status {st}")
+          st == 200 and "light_jupyter_server" in html, f"status {st}")
     st, _ = fetch("/", expect_json=False)
     check("GET / has no token check (fragment cannot reach server)", st == 200)
 
@@ -271,7 +271,7 @@ def main() -> int:
 
     print()
     print("=== 6. default root ===")
-    from light_jupyter.__main__ import default_root
+    from light_jupyter_server.__main__ import default_root
     import getpass as _gp
     me = _gp.getuser()
     dr = default_root(me)
@@ -295,7 +295,7 @@ def main() -> int:
 
     print()
     print("=== 8. advertised address ===")
-    from light_jupyter.__main__ import local_ipv4
+    from light_jupyter_server.__main__ import local_ipv4
     ip = local_ipv4()
     check("local_ipv4 returns a dotted quad",
           len(ip.split(".")) == 4 and all(p.isdigit() for p in ip.split(".")), ip)
@@ -309,7 +309,7 @@ def main() -> int:
     import os as _os
     import stat as _stat
     import tempfile as _tf
-    from light_jupyter.tokens import (ALPHABET, AuthThrottle, entropy_bits,
+    from light_jupyter_server.tokens import (ALPHABET, AuthThrottle, entropy_bits,
                                    is_wellformed, load_or_create,
                                    make_token, verify)
 

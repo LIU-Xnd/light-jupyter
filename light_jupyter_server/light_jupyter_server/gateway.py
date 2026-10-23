@@ -1,11 +1,11 @@
-"""light_jupyter gateway — the server side of the egress-only tunnel.
+"""light_jupyter_server gateway — the server side of the egress-only tunnel.
 
 The server has **no inbound port open** (egress only), so it cannot accept a
 browser connection, and it cannot be discovered by a beacon either: on this
 network inbound UDP is filtered just like TCP, so a client cannot announce
 itself. The address is therefore typed in once:
 
-    python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port 8890
+    python -m light_jupyter_server.gateway --client 192.168.77.160 45901 --lj-port 8890
 
 From then on the server dials *out* to the client (never filtered) and keeps
 that single socket open, multiplexing every browser connection over it:
@@ -234,7 +234,7 @@ def connect(client: Tuple[str, int], lj: Tuple[str, int], secret: bytes,
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
-        prog="python -m light_jupyter.gateway",
+        prog="python -m light_jupyter_server.gateway",
         description="dial out to the browser machine and carry its traffic "
                     "to lj (no inbound ports are used)")
     p.add_argument("--client", nargs=2, required=True,
@@ -253,7 +253,7 @@ def main(argv=None) -> int:
     lj = (args.lj_host, args.lj_port)
 
     log("")
-    log("  light_jupyter gateway  (egress only)")
+    log("  light_jupyter_server gateway  (egress only)")
     log(f"    dialing  : {client[0]}:{client[1]}")
     log(f"    lj       : {lj[0]}:{lj[1]}")
     log(f"    secret   : {args.secret_file}")

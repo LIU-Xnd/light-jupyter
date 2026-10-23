@@ -1,6 +1,6 @@
 """Command line entry point.
 
-    python -m light_jupyter --port 8890 --root ~/LjDev
+    python -m light_jupyter_server --port 8890 --root ~/LjDev
 
 Prints the full token URL on startup. With --no-token a random one is
 generated; pass --token to pin it.
@@ -21,7 +21,7 @@ from .server import make_app, make_token
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="light_jupyter",
+    p = argparse.ArgumentParser(prog="light_jupyter_server",
                                 description="lightweight token-gated web IDE")
     p.add_argument("--host", default="0.0.0.0",
                    help="bind address; the advertised URL uses the first "
@@ -182,7 +182,7 @@ def main(argv=None) -> int:
     url = f"http://{host}:{port}/#token={token}"
     banner = [
         "",
-        "  light_jupyter",
+        "  light_jupyter_server",
         f"    url   : {url}",
         f"    port  : {port}  ({port_note})",
         f"    root  : {root}",
@@ -221,7 +221,7 @@ def main(argv=None) -> int:
         if e.errno in (errno.EADDRINUSE, errno.EACCES):
             raise SystemExit(
                 f"cannot bind {args.host}:{port} ({e.strerror})."
-                + ("  Another light_jupyter may already be running;"
+                + ("  Another light_jupyter_server may already be running;"
                    " stop it or leave --port empty for auto."
                    if e.errno == errno.EADDRINUSE
                    else "  Ports below 1024 need root."))

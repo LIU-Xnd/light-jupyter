@@ -1,4 +1,4 @@
-/* light_jupyter front-end
+/* light_jupyter_server front-end
  *
  * Token flow: the fragment (#token=...) never reaches the server, so the page
  * reads it here, stashes it in a cookie, and hands it to /ws on connect.

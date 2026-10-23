@@ -21,7 +21,7 @@ v0.x and earlier   no client existed: the browser connected straight to the
 ```
 browser  ->  127.0.0.1:48999          (this process)
         ->  the socket the server opened from the outside
-        ->  stream  ->  light_jupyter on the server
+        ->  stream  ->  light_jupyter_server on the server
 ```
 
 Only `127.0.0.1` is exposed to the browser, so nothing on the network can
@@ -66,14 +66,14 @@ python -m light_jupyter_client
 It prints your address and one line to copy:
 
 ```
-  light_jupyter client  (egress-only tunnel)
+  light_jupyter_client  (egress-only tunnel)
     this machine : 192.168.77.160
     server dials : 192.168.77.160:45901
     browser at   : http://127.0.0.1:48999
 
   copy this line to the server terminal:
 
-    python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port <LJ-PORT>
+    python -m light_jupyter_server.gateway --client 192.168.77.160 45901 --lj-port <LJ-PORT>
 ```
 
 **2. Move the shared secret to this machine** (one-time; the server prints a
@@ -97,7 +97,7 @@ with the port its banner shows (the random one is fine — the tunnel makes it
 reachable):
 
 ```bash
-python -m light_jupyter.gateway --client 192.168.77.160 45901 --lj-port 17235
+python -m light_jupyter_server.gateway --client 192.168.77.160 45901 --lj-port 17235
 ```
 
 It will say `link up -> lj 127.0.0.1:17235`.

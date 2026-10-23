@@ -1,4 +1,4 @@
-# light_jupyter
+# light_jupyter_server
 
 A lightweight, token-gated web IDE that runs **on a remote Linux box** and gives
 you, from any browser:
@@ -31,7 +31,7 @@ The tunnel is described in
 
 ```bash
 python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
-python3 -m light_jupyter        # or just: light-jupyter
+python3 -m light_jupyter_server        # or just: light-jupyter
 ```
 
 The install is editable and pulls tornado in automatically; on the target
@@ -113,7 +113,7 @@ and take the first free port. Privileged and well-known ports (`22`, `25`,
 A port taken in between still reports cleanly:
 
 ```
-cannot bind 0.0.0.0:20410 (Address already in use).  Another light_jupyter
+cannot bind 0.0.0.0:20410 (Address already in use).  Another light_jupyter_server
 may already be running; stop it or leave --port empty for auto.
 ```
 
@@ -121,7 +121,7 @@ may already be running; stop it or leave --port empty for auto.
 ## Self-test
 
 ```bash
-python -m light_jupyter.selftest
+python -m light_jupyter_server.selftest
 ```
 
 Exercises the PTY session, the file API, the token gate (401 on missing /
@@ -130,7 +130,7 @@ wrong token, 200 on valid), and a full websocket command round-trip.
 ## Architecture
 
 ```
-light_jupyter/
+light_jupyter_server/
   __main__.py    CLI entry point
   ports.py       port parsing / free-port scanning / socket binding
   tokens.py      256-bit token minting, persistence, auth throttle

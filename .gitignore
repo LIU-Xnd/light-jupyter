@@ -44,3 +44,6 @@ Thumbs.db
 # the tunnel secret, pasted in by hand on each machine
 light_jupyter_client/secret_light_jupyter
 light_jupyter_server/secret_light_jupyter
+
+# pip editable installs of a git URL land a clone in src/
+src/

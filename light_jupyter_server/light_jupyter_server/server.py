@@ -1,4 +1,4 @@
-"""HTTP + WebSocket server for light_jupyter.
+"""HTTP + WebSocket server for light_jupyter_server.
 
 Stack: Tornado (WebSocket + static files). Tornado is already in use on this
 box (port 8895 runs TornadoServer/6.5.2), so it is a natural fit and needs no
@@ -193,7 +193,7 @@ class InfoHandler(TokenMixin, tornado.web.RequestHandler):
             "sessions": len(s.sessions),
             "started": s.started,
             "uptime": round(time.time() - s.started, 1),
-            "version": __import__("light_jupyter").__version__,
+            "version": __import__("light_jupyter_server").__version__,
         })
 
 
@@ -297,7 +297,7 @@ class IndexHandler(tornado.web.RequestHandler):
     """Always serves the shell; the token is validated client-side over /ws."""
 
     def get(self):
-        self.render("index.html", version=__import__("light_jupyter").__version__)
+        self.render("index.html", version=__import__("light_jupyter_server").__version__)
 
 
 def make_app(token: str, root: str, user: str, port: int,

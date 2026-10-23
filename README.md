@@ -48,7 +48,7 @@ python -m light_jupyter_client
 On the server:
 
 ```bash
-python -m light_jupyter        # prints its URL and token
+python -m light_jupyter_server  # prints its URL and token
 ```
 
 On the browser machine (new in v1.0.0, needed whenever the server's port is

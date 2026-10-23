@@ -296,11 +296,11 @@ def main(argv=None) -> int:
 
     # A beacon cannot work here (inbound UDP is filtered too), so the one
     # thing the user has to do is copy this address to the server.
-    server_cmd = (f"python -m light_jupyter.gateway --client {me} "
+    server_cmd = (f"python -m light_jupyter_server.gateway --client {me} "
                   f"{args.listen_port} --lj-port <LJ-PORT>")
 
     log("")
-    log("  light_jupyter client  (egress-only tunnel)")
+    log("  light_jupyter_client  (egress-only tunnel)")
     log(f"    this machine : {me}")
     log(f"    server dials : {me}:{args.listen_port}")
     log(f"    browser at   : http://127.0.0.1:{args.browser_port}")
