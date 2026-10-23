@@ -41,7 +41,9 @@ python -m light_jupyter_client
 ```
 
 > `&egg=` is required on an editable install: pip cannot infer the project
-> name from a bare `#subdirectory` URL.
+> name from a bare `#subdirectory` URL. It matches `[project] name`, not the
+> import name. If github.com:443 is blocked on your network, swap `https://`
+> for `ssh://git@` in the URL.
 
 ## Run
 

@@ -41,6 +41,13 @@ python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdi
 > bare `#subdirectory` URL, and rejects the `name @ url` form outright when
 > `-e` is used.
 
+If github.com is unreachable over HTTPS on your network (a timeout on
+port 443), use the SSH URL instead — pip clones it the same way:
+
+```powershell
+python -m pip install -e "git+ssh://git@github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter_client"
+```
+
 Or from a clone you already have:
 
 ```powershell
