@@ -1,16 +1,16 @@
-"""lj_listen -- the listening side, on the machine that runs the browser.
+"""lj.listen -- the listening side, on the machine that runs the browser.
 
 The server cannot be reached directly (no inbound port), so THIS process
 holds the port instead. It serves the page the browser asks for and accepts
 messages pushed to it from the far side.
 
-    python -m lj_listen                 # 0.0.0.0:10000, fresh token
-    python -m lj_listen --port 10000
-    python -m lj_listen --regen-token   # new token, invalidating the old URL
+    python -m lj.listen                  # 0.0.0.0:10000, fresh token
+    python -m lj.listen --port 10000
+    python -m lj.listen --regen-token   # new token, invalidating the old URL
 
 It prints a one-liner to hand to the sender:
 
-    python -m lj_dialer --target <ip>:<port> --token <token>
+    python -m lj.dialer --target <ip>:<port> --token <token>
 
 SCOPE -- messages only, deliberately
 --------------------------------------
@@ -306,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m lj_listen",
+        prog="lj listen",
         description="hold the port the far side dials, and serve the page "
                     "the browser polls")
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
@@ -344,7 +344,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj_listen  (light_jupyter 2.0)",
+        "  lj.listen  (light_jupyter 2.2)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",
@@ -354,7 +354,7 @@ def main(argv=None) -> int:
         "",
         "  hand this to the sending side:",
         "",
-        f"    python -m lj_dialer --target {me}:{args.port} --token {token}",
+        f"    lj dialer --target {me}:{args.port} --token {token}",
         "",
     ]
     log("\n".join(banner))

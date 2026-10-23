@@ -1,18 +1,18 @@
-"""lj_dialer -- the sending side, on the machine that cannot be reached.
+"""lj.dialer -- the sending side, on the machine that cannot be reached.
 
 No inbound port here, so it dials OUT to wherever lj_listen is holding the
 port, and POSTs a message.
 
-    python -m lj_dialer --target 192.168.77.160:10000 --token lj_...
-    echo hello | python -m lj_dialer --target 192.168.77.160:10000 --token lj_...
-    python -m lj_dialer --target ... --token ... -m "hello"
-    python -m lj_dialer --target ... --token ... --repeat 5 --interval 4
+    python -m lj.dialer --target 192.168.77.160:10000 --token lj_...
+    echo hello | python -m lj.dialer --target 192.168.77.160:10000 --token lj_...
+    python -m lj.dialer --target ... --token ... -m "hello"
+    python -m lj.dialer --target ... --token ... --repeat 5 --interval 4
 
 SCOPE -- messages only, deliberately
 --------------------------------------
 Requests and responses are HTTP messages, never opaque byte streams. There
 is no raw/stream mode here and one should not be added: see the scope note
-in lj_listen.py. Remote shells belong to ssh, which already handles the PTY,
+in lj.listen. Remote shells belong to ssh, which already handles the PTY,
 the flow control and the encryption.
 """
 
@@ -136,7 +136,7 @@ def collect(host: str, port: int, token: str, timeout: float,
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m lj_dialer",
+        prog="lj dialer",
         description="push a message to an lj_listen that is holding the "
                     "port; this side only ever dials out")
     p.add_argument("--target", required=True, metavar="IP[:PORT]",

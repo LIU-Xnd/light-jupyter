@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lj"
+version = "2.2.0"
+description = "A minimal egress-only message channel: one side holds the port, the other dials out"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { text = "MIT" }
+# no dependencies on purpose -- lj is standard library only, so it runs
+# anywhere python does, including a bare Windows box with nothing installed
+dependencies = []
+
+[project.scripts]
+# ONE entry point with two subcommands: `lj listen ...`, `lj dialer ...`
+lj = "lj:main"
+
+[tool.setuptools]
+packages = ["lj"]
+
+[tool.setuptools.package-data]
+lj = ["README.md"]

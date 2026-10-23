@@ -1,6 +1,7 @@
-"""Self-test for the v2 framework. No test framework, stdlib only.
+"""Self-test for lj. No test framework, stdlib only.
 
-    python selftest_v2.py
+    python -m lj.selftest          # from anywhere, once installed
+    python lj/selftest.py          # straight from a clone
 """
 import importlib.util
 import json
@@ -16,6 +17,12 @@ import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 PY = sys.executable
+
+# Import the sibling modules as lj.listen / lj.dialer. When this file is run
+# directly from a clone, lj/ is already sys.path[0] but the PARENT is not, so
+# the package name has to be importable either way.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(HERE.parent))
 
 PASS, FAIL = [], []
 
@@ -35,15 +42,14 @@ def free_port():
     return p
 
 
-def load(name):
-    s = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(s)
-    s.loader.exec_module(m)
-    return m
+def load(module):
+    """Import one of the package's modules by name."""
+    import importlib
+    return importlib.import_module(module)
 
 
-L = load("lj_listen")
-D = load("lj_dialer")
+L = load("lj.listen")
+D = load("lj.dialer")
 
 
 def get(port, path, token=None, timeout=10):
@@ -102,10 +108,10 @@ check("trailing colon", D.split_target("host:") == ("host", 10000))
 
 # ---------------------------------------------------------------- server
 
-print("\n=== 3. lj_listen serves ===")
+print("\n=== 3. lj.listen serves ===")
 PORT = free_port()
 TOK = L.mint_token()
-proc = subprocess.Popen([PY, str(HERE / "lj_listen.py"),
+proc = subprocess.Popen([PY, "-m", "lj", "listen",
                          "--port", str(PORT), "--token-file", str(tmp / "t2"),
                          "--regen-token"],
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -172,10 +178,10 @@ with urllib.request.urlopen(req, timeout=10) as r:
 
 # ------------------------------------------------------------- dialer CLI
 
-print("\n=== 5. lj_dialer ===")
+print("\n=== 5. lj.dialer ===")
 PORT2 = free_port()
 TOK2 = L.mint_token()
-p2 = subprocess.Popen([PY, str(HERE / "lj_listen.py"),
+p2 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT2), "--token-file", str(tmp / "t3"),
                        "--regen-token"],
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -189,7 +195,7 @@ while time.time() < deadline:
 with open(tmp / "t3") as fh:
     TOK2 = fh.read().strip()
 
-r = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", TOK2,
                     "-m", "from the dialer"], capture_output=True, text=True,
                    timeout=30)
@@ -199,7 +205,7 @@ check("dialer reports 204", "204" in r.stdout, r.stdout[-200:])
 status, body = get(PORT2, "/msg", TOK2)
 check("message arrived", json.loads(body)["msgs"] == ["from the dialer"], body[:120])
 
-r = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", "lj_bad",
                     "-m", "nope"], capture_output=True, text=True, timeout=30)
 check("dialer with a bad token fails", r.returncode == 1, str(r.returncode))
@@ -207,7 +213,7 @@ check("dialer says the token was rejected",
       "token rejected" in r.stdout, r.stdout[-160:])
 
 dead = free_port()
-r = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{dead}", "--token", TOK2,
                     "-m", "x"], capture_output=True, text=True, timeout=30)
 check("dialer to a dead port fails cleanly", r.returncode == 1)
@@ -215,7 +221,7 @@ check("dialer explains it cannot connect",
       "cannot reach" in r.stdout, r.stdout[-160:])
 
 # stdin
-r = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", TOK2],
                    input="piped text\n", capture_output=True, text=True,
                    timeout=30)
@@ -228,8 +234,8 @@ print("\n=== 6. scope: messages only ===")
 # A guard, not a feature: the endpoints below must stay message-shaped. If
 # someone adds a raw/stream mode for tunnels, this is where it should fail.
 _page = get(PORT, "/")[1]
-_dialer_src = (HERE / "lj_dialer.py").read_text(encoding="utf-8")
-_listen_src = (HERE / "lj_listen.py").read_text(encoding="utf-8")
+_dialer_src = (HERE / "dialer.py").read_text(encoding="utf-8")
+_listen_src = (HERE / "listen.py").read_text(encoding="utf-8")
 
 for _path in ("/raw", "/stream", "/ws", "/tcp", "/shell", "/exec"):
     try:
@@ -253,7 +259,7 @@ check("the scope note explains why", "SCOPE -- messages only" in _listen_src)
 print("\n=== 6. two-way (v2.1.0) ===")
 PORT3 = free_port()
 TOK3 = L.mint_token()
-p3 = subprocess.Popen([PY, str(HERE / "lj_listen.py"),
+p3 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT3), "--token-file", str(tmp / "t4"),
                        "--regen-token"],
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -297,20 +303,20 @@ for bad in ("lj_wrong", ""):
         check(f"/send rejects token {bad!r}", e.code == 401, str(e.code))
 
 # the dialer's --listen must pick up what the page posted
-d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
                     "--listen", "--once"], capture_output=True, text=True,
                    timeout=30)
 check("dialer --listen exits 0", d.returncode == 0, d.stdout[-200:])
 post(PORT3, "/msg", "browser says hi", TOK3)
-d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
                     "--listen", "--once"], capture_output=True, text=True,
                    timeout=30)
 check("dialer --listen prints the browser's message",
       "browser says hi" in d.stdout, d.stdout[-200:])
 
-d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", "lj_bad",
                     "--listen", "--once"], capture_output=True, text=True,
                    timeout=30)

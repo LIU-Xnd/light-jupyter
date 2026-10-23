@@ -1,11 +1,19 @@
-# light_jupyter 2.0
+# lj
 
 A minimal, egress-only channel. One side holds a port, the other dials out
 to it. No inbound port is needed on the machine that cannot be reached.
 
 ```
+repo/
+  pyproject.toml            <- packaging metadata; the package sits one level
+  lj/                          below it, or the install silently fails
+    __init__.py
+    listen.py                 lj listen
+    dialer.py                 lj dialer
+    selftest.py               python -m lj.selftest
+
 machine A  (no inbound port)            machine B  (holds the port)
-  lj_dialer  --POST /in------------->  lj_listen  :10000
+  lj dialer  --POST /in--------------->  lj listen  :10000
       ^                                    ^
       |                          GET  /msg |  page polls: renders arrivals
       +---- GET /send -------------- POST /msg   page posts: text to send
@@ -21,11 +29,11 @@ Two stdlib-only modules. No dependencies, no install step.
 **On the machine with the browser** - it holds the port:
 
 ```bash
-python -m lj_listen
+lj listen
 ```
 
 ```
-  lj_listen  (light_jupyter 2.0)
+  lj listen  (light_jupyter 2.2)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (generated into ~/.lj/token)
@@ -34,7 +42,7 @@ python -m lj_listen
 
   hand this to the sending side:
 
-    python -m lj_dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
+    lj dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
 ```
 
 Open `http://127.0.0.1:10000/` - the page polls and renders whatever arrives.
@@ -42,9 +50,9 @@ Open `http://127.0.0.1:10000/` - the page polls and renders whatever arrives.
 **On the machine that cannot be reached** - it dials out:
 
 ```bash
-python -m lj_dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z... -m "hello"
-echo "from a pipe" | python -m lj_dialer --target ... --token ...
-python -m lj_dialer --target ... --token ... --repeat 10 --interval 4
+lj dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z... -m "hello"
+echo "from a pipe" | lj dialer --target ... --token ...
+lj dialer --target ... --token ... --repeat 10 --interval 4
 ```
 
 ```
@@ -57,8 +65,9 @@ python -m lj_dialer --target ... --token ... --repeat 10 --interval 4
 
 | | |
 |---|---|
-| **v2.0.0** | one-way: `lj_dialer` pushes, the page renders. |
-| **v2.1.0** | two-way: type in the page and `lj_dialer --listen` receives it. |
+| **v2.0.0** | one-way: `lj dialer` pushes, the page renders. |
+| **v2.1.0** | two-way: type in the page and `lj dialer --listen` receives it. |
+| **v2.2.0** | packaged as `lj`, one command with two subcommands; `lj`, `lj -h` and `lj --help` print the top-level usage. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
@@ -83,7 +92,7 @@ All four data endpoints require the token (`X-LJ-Token` header, or the
 
 ## Commands
 
-### `lj_listen`
+### `lj listen`
 
 | flag | |
 |---|---|
@@ -93,7 +102,7 @@ All four data endpoints require the token (`X-LJ-Token` header, or the
 | `--regen-token` | mint a new token, discarding the old one |
 | `--print-only` | print the banner and exit |
 
-### `lj_dialer`
+### `lj dialer`
 
 | flag | |
 |---|---|
@@ -117,13 +126,13 @@ All four data endpoints require the token (`X-LJ-Token` header, or the
 - sent as the `X-LJ-Token` header; the browser passes it as the `lj_token`
   cookie because a navigation cannot set headers
 
-Regenerate with `python -m lj_listen --regen-token`. The old URL stops
+Regenerate with `lj listen --regen-token`. The old URL stops
 working immediately.
 
 ## Test
 
 ```bash
-python selftest_v2.py
+python lj/selftest.py
 ```
 
 58 checks: token properties, target parsing, the HTTP surface, that a wrong
@@ -135,12 +144,27 @@ permission bits mean something (not on Windows/NTFS).
 
 ## Install
 
-None needed - both files are stdlib only:
+Standard library only, so there is nothing to resolve. Either run it from a
+clone:
 
 ```bash
 git clone https://github.com/LIU-Xnd/light-jupyter.git
 cd light-jupyter
-python -m lj_listen
+lj listen
+```
+
+or install it, which puts `lj.listen` / `lj.dialer` on PATH everywhere:
+
+```bash
+python -m pip install -e .          # editable: git pull updates the install
+lj listen
+```
+
+`#egg=` is required on an editable install of a subdirectory URL - pip cannot
+infer the project name from `#subdirectory` alone:
+
+```bash
+python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=lj&egg=lj"
 ```
 
 If `github.com:443` is blocked on your network, `git clone
@@ -169,7 +193,7 @@ sshd on a reachable port on the browser's machine, another sshd on the
 server bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled
 out from the server. Real SSH, real encryption, nothing to maintain here.
 
-`selftest_v2.py` asserts this boundary — it fails if a `/raw`, `/stream`,
+`lj/selftest.py` asserts this boundary — it fails if a `/raw`, `/stream`,
 `/ws`, `/shell` or `/exec` endpoint or a `--raw`/`--pty` flag ever appears.
 
 ## Limitations
