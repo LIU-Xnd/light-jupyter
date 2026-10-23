@@ -324,6 +324,29 @@ check("dialer --listen with a bad token fails", d.returncode == 1)
 
 # ------------------------------------------------- the page authenticates
 
+print("\n=== 6b. the banner is copy-pasteable ===")
+# The browser URL printed by `lj listen` must carry the token in the
+# fragment. Without it the page loads but sits at "no token", which reads
+# to the user as a broken connection -- so the whole line has to be
+# copy-pasteable.
+_b = subprocess.run([PY, "-m", "lj", "listen", "--print-only",
+                     "--port", "10999", "--token-file",
+                     str(tmp / "t5"), "--regen-token"],
+                    capture_output=True, text=True, timeout=30)
+_out = _b.stdout
+_url = [l for l in _out.splitlines() if "browser :" in l]
+check("listen prints a browser line", bool(_url), _out[-200:])
+if _url:
+    _u = _url[0].split("browser :", 1)[1].strip()
+    _tok = (tmp / "t5").read_text().strip()
+    check("the URL carries the token in the fragment",
+          _u.endswith(f"/#token={_tok}"), _u[-70:])
+    check("the token is NOT in the path or query",
+          "/#token=" in _u and "?" not in _u, _u)
+    check("the dialer line is filled in too",
+          "lj dialer --target" in _out and "--token " + _tok in _out,
+          _out[-200:])
+
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)

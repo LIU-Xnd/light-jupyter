@@ -350,7 +350,9 @@ def main(argv=None) -> int:
         f"    token     : {token}",
         f"                ({note})",
         "",
-        f"  browser : http://127.0.0.1:{args.port}/",
+        # the token rides in the fragment, so this whole line is copy-pasteable:
+        # open it as-is and the page authenticates itself
+        f"  browser : http://127.0.0.1:{args.port}/#token={token}",
         "",
         "  hand this to the sending side:",
         "",
