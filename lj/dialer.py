@@ -19,6 +19,7 @@ the flow control and the encryption.
 import argparse
 import json
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -134,6 +135,113 @@ def collect(host: str, port: int, token: str, timeout: float,
         time.sleep(interval)
 
 
+
+
+# ---------------------------------------------------------------- REPL
+
+HELP = """\
+type a message and press enter to send it to the page
+  /help      this text
+  /send T    send T without putting it on its own line
+  /quit      leave (ctrl-d works too)
+
+messages arriving from the page appear above with their timestamps.
+"""
+
+
+def _stamp() -> str:
+    return time.strftime("%H:%M:%S")
+
+
+def _emit(prefix: str, text: str) -> None:
+    """One log line, always starting on a fresh row.
+
+    Incoming messages arrive on a background thread, possibly while the
+    operator is halfway through typing a prompt, so the line begins with a
+    newline: otherwise the log text lands in the middle of the prompt and
+    the next prompt reuses the same row. The trailing newline then leaves
+    the cursor somewhere clean to type.
+    """
+    print(f"\n  [{_stamp()}] {prefix} {text}", flush=True)
+
+
+def repl(host: str, port: int, token: str, timeout: float,
+         interval: float) -> int:
+    """Interactive two-way session.
+
+    A background thread polls /send for what the browser sends while
+    this thread reads what the operator types and POSTs it. Polling
+    rather than a held socket, as everywhere else in lj: every request
+    stands alone, so a timeout costs one message instead of a
+    connection that has to be detected and rebuilt (NAT tables expire
+    silently and send no FIN).
+    """
+    stop = threading.Event()
+
+    def poller() -> None:
+        while not stop.is_set():
+            try:
+                req = urllib.request.Request(
+                    f"http://{host}:{port}/send",
+                    headers={"X-LJ-Token": token})
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    data = json.loads(r.read().decode("utf-8", "replace"))
+                for m in data.get("msgs", []):
+                    _emit("<--", m)
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    _emit("!!", "token rejected -- the two sides disagree")
+                    stop.set()
+                    return
+            except Exception:
+                pass               # transient; the next tick retries
+            stop.wait(interval)
+
+    print("", flush=True)
+    print("  lj dialer -- interactive", flush=True)
+    print(f"    connected to {host}:{port}", flush=True)
+    print("    type a message and press enter; /help for commands",
+          flush=True)
+    print("    inbound messages are shown with their time; /quit to leave",
+          flush=True)
+    print("", flush=True)
+
+    th = threading.Thread(target=poller, daemon=True)
+    th.start()
+
+    try:
+        while True:
+            try:
+                line = input("you > ")
+            except (EOFError, KeyboardInterrupt):
+                print("", flush=True)
+                break
+
+            line = line.strip()
+            if not line:
+                continue
+            if line in ("/quit", "/exit", "/q"):
+                break
+            if line in ("/help", "/h", "/?"):
+                print("\n" + HELP, end="", flush=True)
+                continue
+            if line.startswith("/send "):
+                line = line[len("/send "):].strip()
+                if not line:
+                    continue
+
+            status, detail = send(host, port, token, line, timeout)
+            if status in (200, 204):
+                _emit("-->", line)
+            else:
+                _emit("!!", f"send failed: {detail}")
+    finally:
+        stop.set()
+
+    print("", flush=True)
+    print("  disconnected", flush=True)
+    return 0
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lj dialer",
@@ -160,6 +268,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "sending (this is the two-way mode)")
     p.add_argument("--once", action="store_true",
                    help="with --listen, poll once and exit")
+    p.add_argument("--interactive", "-i", action="store_true",
+                   help="two-way REPL: type to send, and messages from the "
+                        "page appear live with timestamps (default when "
+                        "stdin is a terminal and no message was given)")
+    p.add_argument("--poll", type=float, default=1.0, metavar="SEC",
+                   help="how often the REPL checks for new messages "
+                        "(default: 1)")
     return p
 
 
@@ -171,6 +286,13 @@ def main(argv=None) -> int:
         return collect(host, port, args.token, args.timeout,
                        args.interval, forever=not args.once,
                        once=args.once)
+
+    # REPL when asked for, or when there is nothing to send and a human is
+    # there to type. Piped stdin or an explicit -m is a one-shot send, so
+    # scripts do not suddenly enter an interactive session.
+    have_msg = args.message is not None or args.file or not sys.stdin.isatty()
+    if args.interactive or (not have_msg and sys.stdin.isatty()):
+        return repl(host, port, args.token, args.timeout, args.poll)
 
     msg = read_message(args)
     if not msg:

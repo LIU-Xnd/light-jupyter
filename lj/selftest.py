@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -248,9 +249,16 @@ for _path in ("/raw", "/stream", "/ws", "/tcp", "/shell", "/exec"):
 
 check("the page offers no terminal", "<textarea" not in _page
       and "xterm" not in _page)
+# --interactive is a REPL for messages, not a terminal: the guard is that
+# lj offers no byte-stream or remote-shell transport. Listing "interactive"
+# here would forbid the very feature it was meant to protect.
 check("the dialer has no stream/pty option",
       not any(f"--{o}" in _dialer_src
-              for o in ("raw", "stream", "pty", "shell", "interactive")))
+              for o in ("raw", "stream", "pty", "shell", "tty", "exec")))
+check("the REPL is messages, not a terminal",
+      "--interactive" in _dialer_src
+      and not any(w in _dialer_src
+                  for w in ("pty.spawn", "os.openpty", "termios")))
 check("the listener has no stream/pty option",
       not any(f'"{o}"' in _listen_src
               for o in ("/raw", "/stream", "/ws", "/shell", "/exec")))
@@ -418,6 +426,51 @@ if _up:
         check("the port is released after ctrl-c", True)
     except OSError as _e:
         check("the port is released after ctrl-c", False, str(_e))
+
+print("\n=== 6d. the REPL is a real two-way session ===")
+# Driven as a subprocess with scripted keystrokes, against a real listener.
+# Unit-testing the pieces would not catch the things that actually broke:
+# a prompt colliding with a log line, or /quit not releasing the session.
+_rp = subprocess.Popen(
+    [PY, "-m", "lj", "dialer", "--interactive",
+     "--target", f"127.0.0.1:{PORT}", "--token", TOK, "--poll", "0.3"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+# The page's message is queued BEFORE the REPL starts, so the poller's
+# first tick finds it. Letting the two race made this check flaky --
+# /quit can be handled before the first poll response ever arrives.
+post(PORT, "/msg", "page says hi", TOK)
+time.sleep(0.3)
+try:
+    _rp.stdin.write("/help" + chr(10) + "hello from the repl" + chr(10)
+                    + "/send via slash" + chr(10) + "/quit" + chr(10))
+    _rp.stdin.flush()
+    _rp.stdin.close()
+except (BrokenPipeError, ValueError):
+    pass
+try:
+    _repl_out, _ = _rp.communicate(timeout=40)
+except subprocess.TimeoutExpired:
+    _rp.kill()
+    _repl_out, _ = _rp.communicate()
+
+check("the REPL shows a banner", "interactive" in _repl_out, _repl_out[-120:])
+check("/help prints the command list", "/send T" in _repl_out, _repl_out[-120:])
+check("a typed line is shown as sent", "hello from the repl" in _repl_out)
+check("the /send command line is shown as sent", "via slash" in _repl_out)
+check("an inbound message is shown live", "page says hi" in _repl_out,
+      _repl_out[-160:])
+check("inbound is marked with <--", "<--" in _repl_out)
+check("outbound is marked with -->", "-->" in _repl_out)
+check("messages carry a timestamp", re.search(r"\[\d\d:\d\d:\d\d\]", _repl_out)
+      is not None)
+check("the prompt is on a line of its own", "you >" in _repl_out)
+check("/quit leaves cleanly", "disconnected" in _repl_out, _repl_out[-120:])
+_got = json.loads(get(PORT, "/msg", TOK)[1])
+check("what the REPL sent reached the page",
+      "hello from the repl" in _got.get("msgs", [])
+      and "via slash" in _got.get("msgs", []), str(_got)[:120])
 
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
