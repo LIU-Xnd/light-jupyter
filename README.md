@@ -29,13 +29,13 @@ nothing needs installing. The browser talks to
 Server (Linux):
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light-jupyter"
 ```
 
 Client (any OS, no dependencies):
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter_client"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light-jupyter-client"
 # or just run it in place
 python -m light_jupyter_client
 ```

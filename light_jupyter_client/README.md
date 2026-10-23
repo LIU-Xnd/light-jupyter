@@ -34,18 +34,20 @@ On Windows, from GitHub (editable — a clone lands in `src/`, so `git pull`
 inside it updates the install). No dependencies beyond the standard library:
 
 ```powershell
-python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter_client"
+python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light-jupyter-client"
 ```
 
 > The `&egg=` fragment is required: pip cannot infer a project name from a
 > bare `#subdirectory` URL, and rejects the `name @ url` form outright when
-> `-e` is used.
+> `-e` is used. It must be the `[project] name` from `pyproject.toml`
+> (`light-jupyter-client`), **not** the import name
+> (`light_jupyter_client`) — the two differ.
 
 If github.com is unreachable over HTTPS on your network (a timeout on
 port 443), use the SSH URL instead — pip clones it the same way:
 
 ```powershell
-python -m pip install -e "git+ssh://git@github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter_client"
+python -m pip install -e "git+ssh://git@github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light-jupyter-client"
 ```
 
 Or from a clone you already have:
