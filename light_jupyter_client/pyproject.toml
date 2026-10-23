@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "light-jupyter-client"
+name = "light_jupyter"
 version = "1.2.0"
 description = "Browser-side end of the light_jupyter egress-only reverse tunnel"
 readme = "README.md"

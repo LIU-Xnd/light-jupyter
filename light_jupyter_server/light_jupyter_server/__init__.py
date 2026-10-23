@@ -10,7 +10,7 @@ Access is gated by a token: http://host:port/#token=<TOKEN>
 
 try:
     from importlib.metadata import version as _version
-    __version__ = _version("light-jupyter")
+    __version__ = _version("light_jupyter")
 except Exception:
     __version__ = "1.2.0"       # fallback when not installed as a distribution
 __all__ = ["__version__"]

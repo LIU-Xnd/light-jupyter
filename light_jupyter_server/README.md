@@ -30,11 +30,11 @@ The tunnel is described in
 ## Run
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light-jupyter"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
 python3 -m light_jupyter_server        # or the console script: light-jupyter-server
 ```
 
-> `&egg=light-jupyter` matches `[project] name`, not the import name. If
+> `&egg=light_jupyter` matches `[project] name`, not the import name. If
 > github.com:443 is blocked on your network, swap `https://` for
 > `ssh://git@` in the URL.
 

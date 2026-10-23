@@ -29,21 +29,22 @@ nothing needs installing. The browser talks to
 Server (Linux):
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light-jupyter"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
 ```
 
 Client (any OS, no dependencies):
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light-jupyter-client"
+python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter"
 # or just run it in place
 python -m light_jupyter_client
 ```
 
 > `&egg=` is required on an editable install: pip cannot infer the project
-> name from a bare `#subdirectory` URL. It matches `[project] name`, not the
-> import name. If github.com:443 is blocked on your network, swap `https://`
-> for `ssh://git@` in the URL.
+> name from a bare `#subdirectory` URL. Both halves ship as `light_jupyter`
+> and are installed into separate environments, so the same `egg=` works for
+> either. If github.com:443 is blocked on your network, swap `https://` for
+> `ssh://git@` in the URL.
 
 ## Run
 

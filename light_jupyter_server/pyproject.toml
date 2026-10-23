@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "light-jupyter"
+name = "light_jupyter"
 version = "1.2.0"
 description = "A lightweight token-gated web IDE: terminal + SFTP over one port"
 readme = "README.md"
