@@ -11,6 +11,23 @@ messages pushed to it from the far side.
 It prints a one-liner to hand to the sender:
 
     python -m lj_dialer --target <ip>:<port> --token <token>
+
+SCOPE -- messages only, deliberately
+--------------------------------------
+This is a message queue with a web page on it. It is NOT a transport for
+arbitrary byte streams, and it must not grow into one.
+
+Carrying a shell over it would mean re-implementing what ssh already does
+correctly: PTY allocation, windowing and flow control, reconnection
+semantics, and end-to-end encryption. Worse, forwarding raw bytes hands the
+holder of the token a remote command channel, so the token stops being a
+message-passing credential and becomes a shell credential. That is a much
+larger blast radius than the one it replaces.
+
+Where a shell on a server with no inbound ports is needed, use ssh's own
+mechanism: an sshd on a reachable port here, another sshd on the server
+bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled out from
+the server. Real SSH, real encryption, and nothing to maintain here.
 """
 
 import argparse

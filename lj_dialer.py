@@ -7,6 +7,13 @@ port, and POSTs a message.
     echo hello | python -m lj_dialer --target 192.168.77.160:10000 --token lj_...
     python -m lj_dialer --target ... --token ... -m "hello"
     python -m lj_dialer --target ... --token ... --repeat 5 --interval 4
+
+SCOPE -- messages only, deliberately
+--------------------------------------
+Requests and responses are HTTP messages, never opaque byte streams. There
+is no raw/stream mode here and one should not be added: see the scope note
+in lj_listen.py. Remote shells belong to ssh, which already handles the PTY,
+the flow control and the encryption.
 """
 
 import argparse
@@ -90,10 +97,10 @@ def collect(host: str, port: int, token: str, timeout: float,
             interval: float, forever: bool, once: bool) -> int:
     """Poll for what the browser sends back.
 
-    Chosen over a long-lived socket on purpose: every request stands alone,
-    so a timeout costs one message instead of a connection that has to be
-    detected and rebuilt. NAT tables expire silently and give no FIN, which
-    is what makes a raw TCP tunnel quietly wedge.
+    Polling rather than a held connection, on purpose: every request stands
+    alone, so a timeout costs one message instead of a connection that has
+    to be detected and rebuilt. NAT tables expire silently and give no FIN,
+    which is what makes a held socket quietly wedge.
     """
     url = f"http://{host}:{port}/send"
     log("")

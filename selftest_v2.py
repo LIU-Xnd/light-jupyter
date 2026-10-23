@@ -224,6 +224,32 @@ check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:12
 
 # ------------------------------------------------------------- two-way
 
+print("\n=== 6. scope: messages only ===")
+# A guard, not a feature: the endpoints below must stay message-shaped. If
+# someone adds a raw/stream mode for tunnels, this is where it should fail.
+_page = get(PORT, "/")[1]
+_dialer_src = (HERE / "lj_dialer.py").read_text(encoding="utf-8")
+_listen_src = (HERE / "lj_listen.py").read_text(encoding="utf-8")
+
+for _path in ("/raw", "/stream", "/ws", "/tcp", "/shell", "/exec"):
+    try:
+        get(PORT, _path)
+        check(f"{_path} is not served", False, "it responded")
+    except urllib.error.HTTPError as _e:
+        check(f"{_path} is not served", _e.code == 404, str(_e.code))
+    except Exception as _e:
+        check(f"{_path} is not served", False, type(_e).__name__)
+
+check("the page offers no terminal", "<textarea" not in _page
+      and "xterm" not in _page)
+check("the dialer has no stream/pty option",
+      not any(f"--{o}" in _dialer_src
+              for o in ("raw", "stream", "pty", "shell", "interactive")))
+check("the listener has no stream/pty option",
+      not any(f'"{o}"' in _listen_src
+              for o in ("/raw", "/stream", "/ws", "/shell", "/exec")))
+check("the scope note explains why", "SCOPE -- messages only" in _listen_src)
+
 print("\n=== 6. two-way (v2.1.0) ===")
 PORT3 = free_port()
 TOK3 = L.mint_token()

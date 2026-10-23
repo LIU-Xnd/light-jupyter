@@ -126,10 +126,11 @@ working immediately.
 python selftest_v2.py
 ```
 
-48 checks: token properties, target parsing, the HTTP surface, that a wrong
+58 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
-each other, that the page can authenticate and send, and the dialer's CLI
-including its failure modes. The `0600` assertion only runs where POSIX
+each other, that the page can authenticate and send, that the dialer's CLI
+handles its failure modes, and that no byte-stream/terminal surface has crept
+in (see Scope). The `0600` assertion only runs where POSIX
 permission bits mean something (not on Windows/NTFS).
 
 ## Install
@@ -152,15 +153,33 @@ git@github.com:LIU-Xnd/light-jupyter.git` works the same.
 - the page itself is unauthenticated (a static shell); all data requires
   the token
 
-## Limitations
+## Scope: messages only, deliberately
 
-This is the transport, not the IDE yet:
+This is a message queue with a web page on it. It is **not** a transport
+for arbitrary byte streams, and there is no raw/stream mode.
+
+Carrying a shell over it would mean re-implementing what ssh already does
+correctly — PTY allocation, windowing, flow control, reconnection, and
+end-to-end encryption. Worse, forwarding raw bytes would turn the token
+from a message-passing credential into a remote shell credential, which is
+a much larger blast radius than the one it replaces.
+
+For a shell on a server with no inbound ports, use ssh's own mechanism: an
+sshd on a reachable port on the browser's machine, another sshd on the
+server bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled
+out from the server. Real SSH, real encryption, nothing to maintain here.
+
+`selftest_v2.py` asserts this boundary — it fails if a `/raw`, `/stream`,
+`/ws`, `/shell` or `/exec` endpoint or a `--raw`/`--pty` flag ever appears.
+
+## Limitations
 
 - messages are queued in memory and dropped on restart; nothing is
   persisted and there is no history on reload
 - one shared token, so anything holding it can both send and receive
 - no delivery guarantee: a message queued while nobody is polling waits
   until someone reads it
+- no shell, no file access, no editor
 - no shell, no file access, no editor yet
 - the port on the listening machine must be reachable by the dialer
 
