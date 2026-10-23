@@ -24,6 +24,17 @@ dist/
 lj_deploy.py
 lj_test.py
 lj_launch.py
+lj_diag*.py
+lj_final_probe.py
+lj_porttest.py
+lj_reachcheck.py
+lj_readout.py
+lj_recheck.py
+lj_runfinal.py
+lj_start.py
+lj_tokencheck.py
+lj_tokentest.py
+lj_verify.py
 s41_*.py
 probe_*.py
 login_probe.py
