@@ -20,7 +20,10 @@ dist/
 .light_jupyter/
 
 # one-off probe and diagnostic scripts (contain hardcoded credentials)
-lj_*.py
+# local deploy helpers (not the shipped lj_listen/lj_dialer)
+lj_deploy.py
+lj_test.py
+lj_launch.py
 s41_*.py
 probe_*.py
 login_probe.py

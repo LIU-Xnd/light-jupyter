@@ -1,95 +1,144 @@
-# light_jupyter
+# light_jupyter 2.0
 
-A token-gated web IDE (terminal + SFTP-style file browser + read-only editor)
-that runs on a remote Linux box and serves, over a single port, from any
-browser.
+A minimal, egress-only channel. One side holds a port, the other dials out
+to it. No inbound port is needed on the machine that cannot be reached.
 
 ```
-v1.0.0 and later   server has NO inbound ports; only outbound is allowed.
-                   Both halves run: the client on the browser's machine,
-                   the server dials out to it. Any random lj port works.
-
-v0.x and earlier   the browser connected straight to the server, so the
-                   port had to be reachable INBOUND. Only usable where the
-                   network admits it (no firewall / same open subnet).
+machine A  (no inbound port)            machine B  (has the port)
+  lj_dialer  ---- POST --------------->  lj_listen  :10000
+                                          ^
+                                          | GET /            browser
+                                          v GET /msg --------  polls
 ```
 
-## Two halves
+Two stdlib-only modules. No dependencies, no install step.
 
-**`light_jupyter_server/`** — the web IDE. Linux only (real PTY);
-depends on tornado. Also provides the `gateway` that dials out to the client.
+## Use
 
-**`light_jupyter_client/`** — the browser-side end of the egress-only
-tunnel. **Windows client** (tested on Windows 11), standard library only, so
-nothing needs installing. The browser talks to
-`http://127.0.0.1:<port>`; nothing is exposed to the network.
+**On the machine with the browser** - it holds the port:
+
+```bash
+python -m lj_listen
+```
+
+```
+  lj_listen  (light_jupyter 2.0)
+    listening : 0.0.0.0:10000
+    reachable : 192.168.77.160:10000
+    token     : lj_FE3FQK8Z...           (generated into ~/.lj/token)
+
+  browser : http://127.0.0.1:10000/
+
+  hand this to the sending side:
+
+    python -m lj_dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
+```
+
+Open `http://127.0.0.1:10000/` - the page polls and renders whatever arrives.
+
+**On the machine that cannot be reached** - it dials out:
+
+```bash
+python -m lj_dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z... -m "hello"
+echo "from a pipe" | python -m lj_dialer --target ... --token ...
+python -m lj_dialer --target ... --token ... --repeat 10 --interval 4
+```
+
+```
+  [13:50:55] 1/3 -> 204 in 0.01s
+  [13:50:56] 2/3 -> 204 in 0.01s
+  [13:50:57] 3/3 -> 204 in 0.00s
+```
+
+## Versions
+
+| | |
+|---|---|
+| **v2.0.0** | one-way: `lj_dialer` -> `lj_listen`. The listener holds the port, the dialer pushes messages, the page renders them. |
+| **v2.1.0** | two-way: the browser can send back too. |
+
+v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
+frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
+end to end, it was the only thing standing between the two machines, and
+plain HTTP is easier to debug, proxy and extend. v1 is still in
+`light_jupyter_server/` and `light_jupyter_client/` if you want the IDE.
+
+## Commands
+
+### `lj_listen`
+
+| flag | |
+|---|---|
+| `--port N` | listen port (default `10000`) |
+| `--host ADDR` | bind address (default `0.0.0.0` - must be reachable by the sender) |
+| `--token-file PATH` | where the token lives (default `~/.lj/token`) |
+| `--regen-token` | mint a new token, discarding the old one |
+| `--print-only` | print the banner and exit |
+
+### `lj_dialer`
+
+| flag | |
+|---|---|
+| `--target IP[:PORT]` | required; defaults to port `10000` |
+| `--token TOKEN` | required |
+| `-m, --message TEXT` | what to send (default: stdin) |
+| `-f, --file PATH` | send a file |
+| `--repeat N`, `--interval SEC` | send repeatedly |
+| `--show` | read the queue back after sending |
+
+## The token
+
+- 256 bits from `secrets`, rendered in a Crockford-style alphabet (no `I`,
+  `L`, `O`, `U`, so a token read off a screen cannot be mistyped into a
+  different valid token)
+- persisted at `~/.lj/token`, mode `0600`
+- compared with `hmac.compare_digest`, so a wrong token cannot be
+  brute-forced by timing
+- sent as the `X-LJ-Token` header; the browser passes it as the `lj_token`
+  cookie because a navigation cannot set headers
+
+Regenerate with `python -m lj_listen --regen-token`. The old URL stops
+working immediately.
+
+## Test
+
+```bash
+python selftest_v2.py
+```
+
+34 checks: token properties, target parsing, the HTTP surface, that a wrong
+token is rejected on every path, and the dialer's CLI including its failure
+modes. The `0600` assertion only runs where POSIX permission bits mean
+something (not on Windows/NTFS).
 
 ## Install
 
-Server (Linux):
+None needed - both files are stdlib only:
 
 ```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_server&egg=light_jupyter"
+git clone https://github.com/LIU-Xnd/light-jupyter.git
+cd light-jupyter
+python -m lj_listen
 ```
 
-Client (any OS, no dependencies):
-
-```bash
-python3 -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdirectory=light_jupyter_client&egg=light_jupyter"
-# or just run it in place
-python -m light_jupyter_client
-```
-
-> `&egg=` is required on an editable install: pip cannot infer the project
-> name from a bare `#subdirectory` URL. Both halves ship as `light_jupyter`
-> and are installed into separate environments, so the same `egg=` works for
-> either. If github.com:443 is blocked on your network, swap `https://` for
-> `ssh://git@` in the URL.
-
-## Run
-
-On the server:
-
-```bash
-python -m light_jupyter_server  # prints its URL and token
-```
-
-On the browser machine (new in v1.0.0, needed whenever the server's port is
-not reachable inbound):
-
-```bash
-python -m light_jupyter_client
-```
-
-It prints your address and the gateway command to paste on the server. Then
-open `http://127.0.0.1:<browser-port>/#token=...` — put the token from the
-server's banner in the fragment. Full walkthrough in
-[`light_jupyter_client/README.md`](light_jupyter_client/README.md).
-
-## What v1.0.0 changed
-
-The browser used to connect straight to the server, which meant the port
-had to be open inbound. On a network that filters inbound traffic per port —
-the lab network this was built on admits 6 of 65,535 — that made an
-auto-picked port unreachable no matter what the server did.
-
-Now the direction is reversed: the server dials **out** (never filtered) to
-the client on the browser's machine, and every browser connection is
-multiplexed over that one outbound socket. The server needs no open port at
-all, and any free port it picks becomes reachable.
-
-Discovery by beacon is not possible in that setup — inbound UDP is filtered
-too — so the client prints its address and you paste it into the gateway
-command once.
+If `github.com:443` is blocked on your network, `git clone
+git@github.com:LIU-Xnd/light-jupyter.git` works the same.
 
 ## Security
 
-- 256-bit CSPRNG tokens in Crockford Base32, compared in constant time,
-  persisted 0600, with per-IP exponential backoff on failure.
-- File access confined to the root; `../` cannot escape.
-- The editor is read-only until you press **edit**.
-- The tunnel's dial-in is authenticated with a fresh-timestamp HMAC; without
-  the shared secret file nothing can attach.
+- 256-bit token compared in constant time, stored `0600`
+- a wrong token is rejected on every path (`GET /msg`, `POST /msg`)
+- the page itself is unauthenticated (a static shell); all data requires
+  the token
+
+## Limitations
+
+This is the transport, not the IDE yet:
+
+- one-way until v2.1.0 (the browser cannot send back)
+- messages are queued in memory and dropped on restart
+- no shell, no file access, no editor yet
+- the port on the listening machine must be reachable by the dialer
 
 ## License
 
