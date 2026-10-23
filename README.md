@@ -68,12 +68,14 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
 | **v2.0.0** | one-way: `lj dialer` pushes, the page renders. |
 | **v2.1.0** | two-way: type in the page and `lj dialer --listen` receives it. |
 | **v2.2.0** | packaged as `lj`, one command with two subcommands; `lj`, `lj -h` and `lj --help` print the top-level usage. |
+| **v2.3.0** | `listen` proves the port is really its own before printing a URL, and ctrl-c shuts down and releases it. |
+| **v2.4.0** | `lj dialer` is a two-way REPL: type to send, inbound messages appear live with timestamps. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
 end to end, it was the only thing standing between the two machines, and
-plain HTTP is easier to debug, proxy and extend. v1 is still in
-`light_jupyter_server/` and `light_jupyter_client/` if you want the IDE.
+plain HTTP is easier to debug, proxy and extend. v1 has been removed; the
+tags up to v1.2.0 still hold it if you need it.
 
 ## Endpoints
 
