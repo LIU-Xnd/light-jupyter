@@ -4,11 +4,14 @@ A minimal, egress-only channel. One side holds a port, the other dials out
 to it. No inbound port is needed on the machine that cannot be reached.
 
 ```
-machine A  (no inbound port)            machine B  (has the port)
-  lj_dialer  ---- POST --------------->  lj_listen  :10000
+machine A  (no inbound port)            machine B  (holds the port)
+  lj_dialer  --POST /in------------->  lj_listen  :10000
+      ^                                    ^
+      |                          GET  /msg |  page polls: renders arrivals
+      +---- GET /send -------------- POST /msg   page posts: text to send
                                           ^
-                                          | GET /            browser
-                                          v GET /msg --------  polls
+                                          |
+                                        browser
 ```
 
 Two stdlib-only modules. No dependencies, no install step.
@@ -54,14 +57,29 @@ python -m lj_dialer --target ... --token ... --repeat 10 --interval 4
 
 | | |
 |---|---|
-| **v2.0.0** | one-way: `lj_dialer` -> `lj_listen`. The listener holds the port, the dialer pushes messages, the page renders them. |
-| **v2.1.0** | two-way: the browser can send back too. |
+| **v2.0.0** | one-way: `lj_dialer` pushes, the page renders. |
+| **v2.1.0** | two-way: type in the page and `lj_dialer --listen` receives it. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
 end to end, it was the only thing standing between the two machines, and
 plain HTTP is easier to debug, proxy and extend. v1 is still in
 `light_jupyter_server/` and `light_jupyter_client/` if you want the IDE.
+
+## Endpoints
+
+One path per direction — an endpoint cannot mean both:
+
+| method | path | who | meaning |
+|---|---|---|---|
+| `GET` | `/` | anyone | the page (a static shell, no data) |
+| `POST` | `/in` | far side | push a message to the page |
+| `GET` | `/msg` | page | take the messages that arrived |
+| `POST` | `/msg` | page | send a message to the far side |
+| `GET` | `/send` | far side | take what the browser typed |
+
+All four data endpoints require the token (`X-LJ-Token` header, or the
+`lj_token` cookie for the page).
 
 ## Commands
 
@@ -84,7 +102,9 @@ plain HTTP is easier to debug, proxy and extend. v1 is still in
 | `-m, --message TEXT` | what to send (default: stdin) |
 | `-f, --file PATH` | send a file |
 | `--repeat N`, `--interval SEC` | send repeatedly |
-| `--show` | read the queue back after sending |
+| `--show` | read what the browser queued after sending |
+| `--listen` | receive what the browser sends instead of sending |
+| `--once` | with `--listen`, poll once and exit |
 
 ## The token
 
@@ -106,10 +126,11 @@ working immediately.
 python selftest_v2.py
 ```
 
-34 checks: token properties, target parsing, the HTTP surface, that a wrong
-token is rejected on every path, and the dialer's CLI including its failure
-modes. The `0600` assertion only runs where POSIX permission bits mean
-something (not on Windows/NTFS).
+48 checks: token properties, target parsing, the HTTP surface, that a wrong
+token is rejected on every path, that the two directions do not bleed into
+each other, that the page can authenticate and send, and the dialer's CLI
+including its failure modes. The `0600` assertion only runs where POSIX
+permission bits mean something (not on Windows/NTFS).
 
 ## Install
 
@@ -135,8 +156,11 @@ git@github.com:LIU-Xnd/light-jupyter.git` works the same.
 
 This is the transport, not the IDE yet:
 
-- one-way until v2.1.0 (the browser cannot send back)
-- messages are queued in memory and dropped on restart
+- messages are queued in memory and dropped on restart; nothing is
+  persisted and there is no history on reload
+- one shared token, so anything holding it can both send and receive
+- no delivery guarantee: a message queued while nobody is polling waits
+  until someone reads it
 - no shell, no file access, no editor yet
 - the port on the listening machine must be reachable by the dialer
 

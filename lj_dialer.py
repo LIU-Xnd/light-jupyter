@@ -10,6 +10,7 @@ port, and POSTs a message.
 """
 
 import argparse
+import json
 import sys
 import time
 import urllib.error
@@ -53,7 +54,8 @@ def read_message(args) -> str:
 def send(host: str, port: int, token: str, msg: str,
          timeout: float) -> tuple:
     """POST one message. Returns (status, detail)."""
-    url = f"http://{host}:{port}/msg"
+    # /in is the far-side-inbound endpoint; the browser's own sends use /msg
+    url = f"http://{host}:{port}/in"
     req = urllib.request.Request(
         url, data=msg.encode("utf-8"), method="POST",
         headers={"X-LJ-Token": token,
@@ -75,13 +77,54 @@ def send(host: str, port: int, token: str, msg: str,
 
 def fetch(host: str, port: int, token: str, timeout: float) -> str:
     """Read the queue back, the way the browser would."""
-    url = f"http://{host}:{port}/msg"
+    url = f"http://{host}:{port}/send"
     req = urllib.request.Request(url, headers={"X-LJ-Token": token})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode("utf-8", "replace")
     except Exception as e:
         return f"({type(e).__name__}: {e})"
+
+
+def collect(host: str, port: int, token: str, timeout: float,
+            interval: float, forever: bool, once: bool) -> int:
+    """Poll for what the browser sends back.
+
+    Chosen over a long-lived socket on purpose: every request stands alone,
+    so a timeout costs one message instead of a connection that has to be
+    detected and rebuilt. NAT tables expire silently and give no FIN, which
+    is what makes a raw TCP tunnel quietly wedge.
+    """
+    url = f"http://{host}:{port}/send"
+    log("")
+    log(f"  listening for the browser on {url}")
+    log(f"    poll every {interval:g}s")
+    log("")
+    seen = 0
+    while True:
+        try:
+            req = urllib.request.Request(url, headers={"X-LJ-Token": token})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            for m in data.get("msgs", []):
+                seen += 1
+                log(f"  [{time.strftime('%H:%M:%S')}] browser: {m}")
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                log("  token rejected -- the two sides disagree")
+            else:
+                log(f"  {e.code}: {e.read().decode('utf-8', 'replace')[:80]}")
+            if once:
+                return 1
+        except Exception as e:
+            log(f"  {type(e).__name__}: {e}")
+            if once:
+                return 1
+        if once:
+            return 0
+        if not forever:
+            return 0
+        time.sleep(interval)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,14 +148,24 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"per-request timeout (default: {DEFAULT_TIMEOUT:g}s)")
     p.add_argument("--show", action="store_true",
                    help="read the queue back after sending")
+    p.add_argument("--listen", action="store_true",
+                   help="collect what the browser sends back instead of "
+                        "sending (this is the two-way mode)")
+    p.add_argument("--once", action="store_true",
+                   help="with --listen, poll once and exit")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     host, port = split_target(args.target)
-    msg = read_message(args)
 
+    if args.listen:
+        return collect(host, port, args.token, args.timeout,
+                       args.interval, forever=not args.once,
+                       once=args.once)
+
+    msg = read_message(args)
     if not msg:
         log("nothing to send: pass -m, -f, or pipe text on stdin")
         return 2

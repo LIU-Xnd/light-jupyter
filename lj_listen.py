@@ -34,7 +34,23 @@ ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 TOKEN_BYTES = 32                      # 256 bits
 TOKEN_PREFIX = "lj_"
 
-MSGS = queue.Queue(maxsize=1000)
+# Two queues, opposite directions. INBOUND is what the far side pushed to
+# us; OUTBOUND is what the browser wants the far side to pick up. They are
+# separate on purpose: a message the browser sends must not be echoed back
+# to it as if it had arrived from the server.
+INBOUND = queue.Queue(maxsize=1000)
+OUTBOUND = queue.Queue(maxsize=1000)
+
+
+def _drain(q: queue.Queue, limit: int = 500) -> list:
+    """Take everything queued, up to `limit`, without blocking."""
+    out = []
+    while len(out) < limit:
+        try:
+            out.append(q.get_nowait())
+        except queue.Empty:
+            break
+    return out
 
 
 def log(msg: str = "") -> None:
@@ -88,7 +104,7 @@ def verify(token: str, presented: str) -> bool:
 
 # ------------------------------------------------------------------- page
 
-PAGE = """<!doctype html>
+PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <title>light_jupyter</title>
 <style>
@@ -103,10 +119,39 @@ PAGE = """<!doctype html>
 <h1>light_jupyter</h1>
 <div id="bar">connecting&hellip;</div>
 <div id="log"></div>
+<form id="form" style="margin-top:1rem">
+  <input id="text" placeholder="type here, enter to send"
+         style="font:inherit;padding:.4rem;width:22rem;border:1px solid #ccc;border-radius:4px">
+  <button type="submit" style="font:inherit;padding:.4rem 1rem">send</button>
+</form>
 <script>
 const logEl = document.getElementById('log');
 const bar   = document.getElementById('bar');
-let seen = 0;
+const form  = document.getElementById('form');
+const input = document.getElementById('text');
+let token = '';
+let seen  = 0;
+
+// The token rides in the fragment, which browsers never put on the wire.
+// Move it into a cookie so the <form> navigation can carry it too.
+function grabToken() {
+  const h = location.hash || '';
+  const m = /(?:^#|[?&])token=([^&]+)/.exec(h);
+  if (m) {
+    token = decodeURIComponent(m[1]);
+    document.cookie = 'lj_token=' + token + '; path=/; SameSite=Strict';
+    history.replaceState(null, '', location.pathname);   // keep it out of history
+    return true;
+  }
+  const c = /(?:^|;)\s*lj_token=([^;]+)/.exec(document.cookie);
+  if (c) { token = decodeURIComponent(c[1]); return true; }
+  return false;
+}
+
+function setState(text, bad) {
+  bar.textContent = text;
+  bar.style.color = bad ? '#b00' : '#666';
+}
 
 function render(msgs) {
   for (const m of msgs) {
@@ -117,22 +162,41 @@ function render(msgs) {
   if (msgs.length) {
     logEl.scrollTop = logEl.scrollHeight;
     seen += msgs.length;
-    bar.textContent = seen + ' message' + (seen === 1 ? '' : 's');
+    setState(seen + ' message' + (seen === 1 ? '' : 's'), false);
   }
 }
 
 async function tick() {
+  if (!token) { setState('no token -- use http://127.0.0.1:PORT/#token=...', true); return; }
   try {
-    const r = await fetch('msg?t=' + Date.now(), {cache: 'no-store'});
-    if (r.status === 401) { bar.textContent = 'token rejected'; return; }
-    const d = await r.json();
-    render(d.msgs);
+    const r = await fetch('msg', {cache: 'no-store',
+                                  headers: {'X-LJ-Token': token}});
+    if (r.status === 401) { setState('token rejected', true); return; }
+    render((await r.json()).msgs);
   } catch (e) {
-    bar.textContent = 'waiting for the listener (' + e.message + ')';
+    setState('waiting for the listener (' + e.message + ')', true);
   }
   setTimeout(tick, 500);
 }
-tick();
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const text = input.value;
+  if (!text.trim()) return;
+  input.value = '';
+  try {
+    const r = await fetch('msg', {method: 'POST',
+                                  headers: {'X-LJ-Token': token,
+                                            'Content-Type': 'text/plain'}});
+    if (r.status === 401) { setState('token rejected', true); return; }
+    setState('sent', false);
+  } catch (e) {
+    setState('send failed: ' + e.message, true);
+  }
+});
+
+if (grabToken()) tick();
+else setState('no token -- use http://127.0.0.1:PORT/#token=...', true);
 </script>
 """
 
@@ -175,20 +239,29 @@ class Handler(BaseHTTPRequestHandler):
             if not self._token_ok():
                 self._send(b'{"error":"bad token"}', "application/json", 401)
                 return
-            out = []
-            while True:
-                try:
-                    out.append(MSGS.get_nowait())
-                except queue.Empty:
-                    break
-            self._send(json.dumps({"msgs": out}).encode("utf-8"),
+            # what the far side pushed to us, for the page to render
+            self._send(json.dumps({"msgs": _drain(INBOUND)}).encode("utf-8"),
+                       "application/json")
+            return
+        if path == "/send":
+            if not self._token_ok():
+                self._send(b'{"error":"bad token"}', "application/json", 401)
+                return
+            # what the page typed, for the far side to collect
+            self._send(json.dumps({"msgs": _drain(OUTBOUND)}).encode("utf-8"),
                        "application/json")
             return
         self._send(b"not found", "text/plain", 404)
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path != "/msg":
+        # POST /msg is the browser sending out; POST /in is the far side
+        # sending in. They cannot share an endpoint: one direction per path.
+        if path == "/msg":
+            target, source = OUTBOUND, "page"
+        elif path == "/in":
+            target, source = INBOUND, "far "
+        else:
             self._send(b"not found", "text/plain", 404)
             return
         if not self._token_ok():
@@ -199,13 +272,13 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             n = 0
         raw = self.rfile.read(n) if n > 0 else b""
+        text = raw.decode("utf-8", "replace")
         try:
-            MSGS.put_nowait(raw.decode("utf-8", "replace"))
+            target.put_nowait(text)
         except queue.Full:
             self._send(b'{"error":"queue full"}', "application/json", 507)
             return
-        head = raw[:60].decode("utf-8", "replace")
-        log(f"  <- {len(raw):>6} bytes  {head!r}")
+        log(f"  {source} ->  {len(raw):>6} chars  {text[:60]!r}")
         self._send(b"", "text/plain", 204)
 
     def log_message(self, *_a) -> None:

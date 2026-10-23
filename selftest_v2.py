@@ -129,16 +129,16 @@ with open(tmp / "t2") as fh:
 
 status, html = get(PORT, "/")
 check("GET / -> 200", status == 200, str(status))
-check("page polls /msg", "'/msg'" in html or "'msg?" in html, html[:120])
+check("page polls /msg", "fetch('msg'" in html, html[:160])
 check("page is self-contained", "script" in html and "src=" not in html)
 
-status, body = post(PORT, "/msg", "hello from the dialer", TOK)
-check("POST /msg with the right token -> 204", status == 204, str(status))
+status, body = post(PORT, "/in", "hello from the far side", TOK)
+check("POST /in with the right token -> 204", status == 204, str(status))
 
 status, body = get(PORT, "/msg", TOK)
 data = json.loads(body)
-check("GET /msg returns the message", data["msgs"] == ["hello from the dialer"],
-      body[:200])
+check("GET /msg returns what came in",
+      data["msgs"] == ["hello from the far side"], body[:200])
 
 status, body = get(PORT, "/msg", TOK)
 check("queue is drained after one read", json.loads(body)["msgs"] == [], body[:80])
@@ -221,6 +221,99 @@ r = subprocess.run([PY, str(HERE / "lj_dialer.py"),
                    timeout=30)
 status, body = get(PORT2, "/msg", TOK2)
 check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:120])
+
+# ------------------------------------------------------------- two-way
+
+print("\n=== 6. two-way (v2.1.0) ===")
+PORT3 = free_port()
+TOK3 = L.mint_token()
+p3 = subprocess.Popen([PY, str(HERE / "lj_listen.py"),
+                       "--port", str(PORT3), "--token-file", str(tmp / "t4"),
+                       "--regen-token"],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+deadline = time.time() + 20
+while time.time() < deadline:
+    try:
+        s = socket.create_connection(("127.0.0.1", PORT3), timeout=0.4)
+        s.close(); break
+    except OSError:
+        time.sleep(0.3)
+with open(tmp / "t4") as fh:
+    TOK3 = fh.read().strip()
+
+# far side -> us
+post(PORT3, "/in", "from the far side", TOK3)
+status, body = get(PORT3, "/msg", TOK3)
+check("GET /msg shows what the far side sent",
+      json.loads(body)["msgs"] == ["from the far side"], body[:120])
+
+# the browser's own POST, read by the far side
+post(PORT3, "/msg", "from the page", TOK3)
+status, body = get(PORT3, "/send", TOK3)
+check("GET /send collects what the browser sent",
+      json.loads(body)["msgs"] == ["from the page"], body[:120])
+
+status, body = get(PORT3, "/send", TOK3)
+check("outbound queue is drained after one read",
+      json.loads(body)["msgs"] == [], body[:80])
+
+# the two queues must not bleed into each other
+post(PORT3, "/msg", "browser side", TOK3)
+status, body = get(PORT3, "/msg", TOK3)
+check("the browser's own message is not echoed back to it",
+      json.loads(body)["msgs"] == [], f"leaked: {body[:100]}")
+
+for bad in ("lj_wrong", ""):
+    try:
+        get(PORT3, "/send", bad)
+        check(f"/send rejects token {bad!r}", False, "accepted")
+    except urllib.error.HTTPError as e:
+        check(f"/send rejects token {bad!r}", e.code == 401, str(e.code))
+
+# the dialer's --listen must pick up what the page posted
+d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+                    "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
+                    "--listen", "--once"], capture_output=True, text=True,
+                   timeout=30)
+check("dialer --listen exits 0", d.returncode == 0, d.stdout[-200:])
+post(PORT3, "/msg", "browser says hi", TOK3)
+d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+                    "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
+                    "--listen", "--once"], capture_output=True, text=True,
+                   timeout=30)
+check("dialer --listen prints the browser's message",
+      "browser says hi" in d.stdout, d.stdout[-200:])
+
+d = subprocess.run([PY, str(HERE / "lj_dialer.py"),
+                    "--target", f"127.0.0.1:{PORT3}", "--token", "lj_bad",
+                    "--listen", "--once"], capture_output=True, text=True,
+                   timeout=30)
+check("dialer --listen with a bad token fails", d.returncode == 1)
+
+# ------------------------------------------------- the page authenticates
+
+print("\n=== 7. the page can actually authenticate ===")
+status, html = get(PORT3, "/")
+check("page reads the token from the fragment", "location.hash" in html)
+check("page stores it in a cookie", "document.cookie" in html)
+check("page sends the X-LJ-Token header", "X-LJ-Token" in html)
+check("page has a way to send back", 'id="form"' in html and "method: 'POST'" in html)
+check("page clears the fragment from the URL",
+      "replaceState" in html, "token would stay in the address bar")
+
+# and a page that did NOT set the cookie really is refused -- this is the
+# case the v2.0.0 test missed by setting the cookie by hand
+try:
+    get(PORT3, "/msg")
+    check("a page with no token at all is refused", False, "accepted")
+except urllib.error.HTTPError as e:
+    check("a page with no token at all is refused", e.code == 401, str(e.code))
+
+p3.terminate()
+try:
+    p3.wait(timeout=8)
+except subprocess.TimeoutExpired:
+    p3.kill()
 
 for p in (proc, p2):
     p.terminate()
