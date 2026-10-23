@@ -16,5 +16,9 @@ Run:
 It prints the exact command to run on the server.
 """
 
-__version__ = "1.0.0"
+try:
+    from importlib.metadata import version as _version
+    __version__ = _version("light-jupyter-client")
+except Exception:
+    __version__ = "1.1.2"       # fallback when not installed as a distribution
 __all__ = ["__version__"]

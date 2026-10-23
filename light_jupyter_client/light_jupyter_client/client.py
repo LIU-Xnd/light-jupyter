@@ -90,10 +90,15 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
 
 
 def local_addr() -> str:
-    """Our address on the path to the server (a UDP connect sends nothing)."""
+    """Our address on the path to the server (a UDP connect sends nothing).
+
+    Any destination works -- the connect is only there to make the kernel
+    pick the interface and hand back the local address. A public address is
+    used so that no internal address has to live in this file.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("192.168.117.41", 9))
+        s.connect(("1.1.1.1", 9))          # discard port; nothing is sent
         return s.getsockname()[0]
     except OSError:
         return "127.0.0.1"
