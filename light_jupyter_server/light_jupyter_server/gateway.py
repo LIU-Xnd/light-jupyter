@@ -32,6 +32,7 @@ import argparse
 import base64
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import socket
@@ -50,6 +51,51 @@ HDR = struct.Struct("!IBI")
 MAX_FRAME = 1 << 20
 
 DEFAULT_SECRET = os.path.expanduser("~/.light_jupyter/secret_light_jupyter")
+
+
+# ---------------------------------------------------------------- handoff
+#
+# The single line the client prints and the operator pastes here. It carries
+# the address, the shared secret and both ports, so nothing is looked up on
+# the other side and nothing is edited by hand.
+#
+#   lj1.<base64url(json)>
+#
+# JSON rather than positional fields so a hand-copied line is diagnosable,
+# and a versioned prefix so a future format change is rejected loudly
+# instead of being misparsed into a wrong address.
+HANDOFF_PREFIX = "lj1."
+
+
+def decode_handoff(blob: str) -> dict:
+    """Parse what the client printed. Raises ValueError with a usable reason.
+
+    Tolerates the two things that actually happen when a line is pasted:
+    surrounding quotes, and a trailing newline or stray whitespace.
+    """
+    blob = blob.strip().strip('"').strip("'").strip()
+    if not blob.startswith(HANDOFF_PREFIX):
+        raise ValueError(
+            f"it does not start with {HANDOFF_PREFIX!r} -- copy the whole "
+            f"line the client printed, starting at 'lj1.'")
+    body = blob[len(HANDOFF_PREFIX):]
+    pad = "=" * (-len(body) % 4)          # urlsafe b64 was stripped of them
+    try:
+        data = json.loads(base64.urlsafe_b64decode(body + pad).decode())
+    except (ValueError, UnicodeDecodeError) as e:
+        raise ValueError(
+            f"the payload does not decode ({e}); it looks cut short -- "
+            f"re-copy the line in full")
+    missing = [k for k in ("ip", "port", "secret") if k not in data]
+    if missing:
+        raise ValueError(f"missing {missing}; it carries {sorted(data)}")
+    try:
+        data["secret_b"] = base64.b64decode(data["secret"], validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("the secret is not valid base64 -- re-copy the line")
+    if len(data["secret_b"]) < 16:
+        raise ValueError("the secret is too short to be a real one")
+    return data
 
 
 def log(msg: str) -> None:

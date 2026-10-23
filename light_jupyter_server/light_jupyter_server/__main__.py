@@ -53,6 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: 5)")
     p.add_argument("--print-only", action="store_true",
                    help="print the URL and exit without listening")
+    p.add_argument("--tunnel", action="store_true",
+                   help="reach the browser through the client instead of "
+                        "listening inbound: no port of this machine needs to "
+                        "be reachable, and this process dials out")
+    p.add_argument("--handoff-file", default=None, metavar="PATH",
+                   help="read the client's one line from PATH instead of "
+                        "pasting it (for unattended startup)")
     return p
 
 
@@ -146,6 +153,90 @@ def local_ipv4() -> str:
     return "127.0.0.1"
 
 
+# ---------------------------------------------------------------- tunnel mode
+
+def _read_handoff(args) -> str:
+    """Get the client's one line: from a file if asked, else pasted here."""
+    if args.handoff_file:
+        with open(args.handoff_file, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+
+    # Deliberately a plain stdin read, not input(): the line can be a few
+    # hundred characters and input() mangles nothing but prompt handling is
+    # easier without it. No echo control is attempted -- the value is a
+    # shared secret and this is a normal terminal session.
+    print("", flush=True)
+    print("  Paste the line the client printed (it starts with 'lj1.'),"
+          " then press Enter:", flush=True)
+    print("  (copy it in full; press Enter again on an empty line to"
+          " cancel)", flush=True)
+    lines = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        line = line.strip()
+        if not line:
+            break
+        lines.append(line)
+    return " ".join(lines).strip()
+
+
+def run_tunnel(args, token: str, root: str, user: str, host: str) -> int:
+    """Serve through the client: no inbound port is used at all.
+
+    The server dials out, so the browser's address is the only thing the
+    two sides have to agree on -- and the client hands that over as one
+    line, which is why this is interactive rather than a pile of flags.
+    """
+    from .gateway import decode_handoff, connect, HANDOFF_PREFIX
+
+    blob = _read_handoff(args)
+    if not blob:
+        print("", flush=True)
+        print("  no handoff given -- not starting.", flush=True)
+        return 2
+
+    try:
+        data = decode_handoff(blob)
+    except ValueError as e:
+        raise SystemExit(f"\ncannot read the client's line: {e}\n")
+
+    client = (data["ip"], int(data["port"]))
+    secret = data["secret_b"]
+
+    # lj still listens, but only on loopback: nothing outside can reach it,
+    # which is exactly why any port the kernel hands out is fine.
+    import socket as _sock
+    probe = _sock.socket()
+    probe.bind(("127.0.0.1", 0))
+    lj_port = probe.getsockname()[1]
+    probe.close()
+
+    from .server import make_app
+    app = make_app(token=token, root=root, user=user, port=lj_port,
+                   trust_proxy=args.trust_proxy,
+                   throttle_threshold=args.throttle_threshold)
+    app.listen(lj_port, address="127.0.0.1")
+
+    browser_port = int(data.get("browser_port", 0)) or None
+    url = f"http://127.0.0.1:{browser_port}/#token={token}" \
+        if browser_port else f"http://127.0.0.1:{lj_port}/#token={token}"
+
+    print("", flush=True)
+    print("  light_jupyter_server via the client  (egress only)", flush=True)
+    print(f"    dialing  : {client[0]}:{client[1]}", flush=True)
+    print(f"    lj       : 127.0.0.1:{lj_port}  (loopback only)", flush=True)
+    print(f"    browser  : {url}", flush=True)
+    print("", flush=True)
+    print("  open that URL in the browser on the client machine.", flush=True)
+    print("  ctrl-c to stop", flush=True)
+    print("", flush=True)
+
+    return connect(client, ("127.0.0.1", lj_port), secret, forever=True)
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -197,6 +288,9 @@ def main(argv=None) -> int:
 
     if args.print_only:
         return 0
+
+    if args.tunnel:
+        return run_tunnel(args, token, root, user, host)
 
     import tornado.ioloop
 

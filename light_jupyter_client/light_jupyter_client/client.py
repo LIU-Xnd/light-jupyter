@@ -28,10 +28,13 @@ multiplexed over that single socket:
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import os
+import json
 import socket
+import secrets
 import struct
 import sys
 import threading
@@ -54,8 +57,39 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def load_secret(path: str) -> bytes:
-    """The shared secret; must match the server's byte for byte."""
+# ------------------------------------------------------------ handoff blob
+#
+# The one line the client hands to the operator. It carries the address, the
+# shared secret and both ports, so the server needs nothing else and nothing
+# has to be edited by hand. Format is versioned ("lj1.") so a future change
+# is rejected loudly instead of misparsed.
+#
+# This is the same codec as light_jupyter_server.gateway.encode_handoff,
+# kept as a literal copy: the client must run on its own with nothing but
+# the standard library, and importing the server package would defeat that.
+HANDOFF_PREFIX = "lj1."
+
+
+def encode_handoff(ip, port, secret, listen_port, browser_port) -> str:
+    payload = {
+        "ip": ip,
+        "port": int(port),
+        "secret": base64.b64encode(secret).decode(),
+        "listen_port": int(listen_port),
+        "browser_port": int(browser_port),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return HANDOFF_PREFIX + base64.urlsafe_b64encode(
+        raw.encode()).decode().rstrip("=")
+
+
+def load_or_make_secret(path: str) -> bytes:
+    """Reuse the stored secret, or mint one on first run.
+
+    The client mints it because the handoff carries the secret to the
+    server: whoever generates it, it still has to be the same bytes on both
+    ends, and generating it here means there is no second file to copy.
+    """
     for cand in (path, os.path.join(os.getcwd(), "secret_light_jupyter")):
         try:
             with open(cand, "rb") as fh:
@@ -64,14 +98,18 @@ def load_secret(path: str) -> bytes:
                 return s
         except OSError:
             continue
-    raise SystemExit(
-        f"no shared secret found (looked in {path} and the cwd).\n"
-        "\n"
-        "  the server prints a one-liner on its first run. copy it here:\n"
-        "\n"
-        "    echo <BASE64> | base64 -d > secret_light_jupyter\n"
-        "    icacls secret_light_jupyter /inheritance:r"
-        " /grant:r \"%USERNAME%:R\"\n")
+    s = secrets.token_bytes(32)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, mode=0o700, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(s)
+        log(f"  shared secret created: {path}")
+    except OSError:
+        pass          # a read-only cwd is fine; the line still carries it
+    return s
 
 
 def hello_mac(secret: bytes, ts: int) -> bytes:
@@ -291,13 +329,15 @@ def main(argv=None) -> int:
                    help="print the server-side command, then exit")
     args = p.parse_args(argv)
 
-    secret = load_secret(args.secret_file)
+    secret = load_or_make_secret(args.secret_file)
     me = local_addr()
 
     # A beacon cannot work here (inbound UDP is filtered too), so the one
-    # thing the user has to do is copy this address to the server.
-    server_cmd = (f"python -m light_jupyter_server.gateway --client {me} "
-                  f"{args.listen_port} --lj-port <LJ-PORT>")
+    # thing the user has to do is carry this address to the server. It goes
+    # as a single self-contained line so there is nothing to edit: no port
+    # to look up on the other side, no secret file to move separately.
+    blob = encode_handoff(me, args.listen_port, secret,
+                          args.listen_port, args.browser_port)
 
     log("")
     log("  light_jupyter_client  (egress-only tunnel)")
@@ -305,9 +345,11 @@ def main(argv=None) -> int:
     log(f"    server dials : {me}:{args.listen_port}")
     log(f"    browser at   : http://127.0.0.1:{args.browser_port}")
     log("")
-    log("  copy this line to the server terminal:")
+    log("  On the server, run this, then paste the line it asks for:")
     log("")
-    log(f"    {server_cmd}")
+    log("    python -m light_jupyter_server --tunnel")
+    log("")
+    log(f"  {blob}")
     log("")
     if args.print_only:
         return 0
