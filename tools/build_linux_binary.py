@@ -1,8 +1,12 @@
-"""Build a single-file Linux binary for the dialer.
+"""Build a single-file Linux binary for the far side.
 
 The point is a machine that cannot be reached -- a server with no
-Python, no conda, no pip -- still being able to send a message out.
-So the binary has to carry its own interpreter.
+Python, no conda, no pip -- still being able to be worked on: to run
+the worker that serves the browser's requests, and to send a message
+out. So the binary has to carry its own interpreter.
+
+The worker is the half that matters. It is the side that has to dial
+out, and it is the side that runs on the box with nothing installed.
 
 Build it on the machine it will run on. A PyInstaller binary links
 against the glibc of the system that built it, and glibc only ever goes
@@ -51,14 +55,15 @@ def main() -> int:
     cmd = [
         "pyinstaller",
         "--onefile",              # one file, not a directory of them
-        "--name", "lj-dialer",
+        "--name", "lj",
         "--distpath", str(DIST),
         "--workpath", str(work),
         "--specpath", str(work),
         "--noconfirm",
         "--clean",
-        # tkinter is not used by the dialer and pulls in a lot of X11
-        # libraries; excluding it keeps the binary small.
+        # tkinter is Windows-only here -- the window is not part of the
+        # frozen binary -- and it pulls in a lot of X11 libraries, so
+        # excluding it keeps the binary small.
         "--exclude-module", "tkinter",
         "--exclude-module", "unittest",
         "--exclude-module", "pydoc",
@@ -70,7 +75,7 @@ def main() -> int:
     if r.returncode != 0:
         raise SystemExit(f"pyinstaller failed ({r.returncode})")
 
-    out = DIST / "lj-dialer"
+    out = DIST / "lj"
     if not out.is_file():
         raise SystemExit(f"no binary at {out}")
     out.chmod(0o755)
