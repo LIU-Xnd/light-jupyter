@@ -583,17 +583,23 @@ _remember(_rp)
 # /quit can be handled before the first poll response ever arrives.
 post(PORT, "/msg", "page says hi", TOK)
 time.sleep(0.3)
+_SESSION = ("/help" + chr(10) + "hello from the repl" + chr(10)
+            + "/send via slash" + chr(10) + "/quit" + chr(10))
 try:
-    _rp.stdin.write("/help" + chr(10) + "hello from the repl" + chr(10)
-                    + "/send via slash" + chr(10) + "/quit" + chr(10))
+    _rp.stdin.write(_SESSION)
     _rp.stdin.flush()
     _rp.stdin.close()
 except (BrokenPipeError, ValueError):
     pass
+# communicate() flushes stdin, and stdin is already closed -- on Linux
+# that raises ValueError and kills the whole suite. Set stdin to None so
+# communicate() leaves it alone.
 try:
+    _rp.stdin = None
     _repl_out, _ = _rp.communicate(timeout=40)
 except subprocess.TimeoutExpired:
     _rp.kill()
+    _rp.stdin = None
     _repl_out, _ = _rp.communicate()
 
 check("the REPL shows a banner", "interactive" in _repl_out, _repl_out[-120:])
