@@ -105,6 +105,20 @@ Things that are not obvious and cost time to rediscover:
 - `INSTALLFOLDER` is the public property, so a custom folder is
   `msiexec /i lj.msi INSTALLFOLDER=D:\somewhere\lj`. The directory
   page binds to `WIXUI_INSTALLDIR` and writes it back there.
+- **`WixUI_InstallDir` needs a property the package has to define.**
+  The set's "Destination Folder" page has a PathEdit control bound to
+  `WIXUI_INSTALLDIR`, and the set does not define that property. Without
+  it the installer stops with
+  `Error 2819: Control Folder on dialog InstallDirDlg needs a property
+  linked to it` (wixtoolset/issues#818). So the package carries
+  `<Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />`.
+  The value is the directory's **Id**, not a reference to it: a value
+  like `[INSTALLFOLDER]` is a property reference, which wix warns about
+  (WIX1077) and the installer does not resolve.
+- **A silent install does not prove the UI works.** Error 2819 only
+  fires when the installer actually shows the folder page, so
+  `msiexec /i ... /qn` succeeding says nothing about it. Check the MSI's
+  Control and Property tables instead.
 - The MSI is unsigned, so Windows warns about an unknown publisher.
   `pyappdist` has a `sign:` stage for when there is a certificate.
 - The build prints
