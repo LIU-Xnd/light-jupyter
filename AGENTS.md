@@ -119,6 +119,9 @@ Things that are not obvious and cost time to rediscover:
   fires when the installer actually shows the folder page, so
   `msiexec /i ... /qn` succeeding says nothing about it. Check the MSI's
   Control and Property tables instead.
+- The general procedure is written up as a skill:
+  `python-package-release` -> `references/msi-installer-ui.md`, with
+  `scripts/msi_ui.py` to switch the UI set and to check a built MSI.
 - The MSI is unsigned, so Windows warns about an unknown publisher.
   `pyappdist` has a `sign:` stage for when there is a certificate.
 - The build prints
