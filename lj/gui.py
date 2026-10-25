@@ -261,7 +261,7 @@ class App(tk.Tk):
 
     def _started(self, srv, token, note):
         self.token = token
-        self.btn.configure(text="Stop")
+        self._set_button("Stop")
         self.copy_btn.configure(state="normal")
         self.open_btn.configure(state="normal")
         self.send_btn.configure(state="normal")
@@ -276,13 +276,27 @@ class App(tk.Tk):
         self._append("the sender needs that URL and the token")
 
     def _failed(self, why):
-        self.btn.configure(text="Start")
+        self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.send_btn.configure(state="disabled")
         self.url_var.set("not running")
         self._append(f"FAILED: {why}")
         messagebox.showerror(APP_TITLE, why)
+
+    def _set_button(self, text: str, enabled: bool = True) -> None:
+        """Set the button's label AND whether it can be clicked.
+
+        These have to be set together. The button is disabled while the
+        listener starts, and setting only the text afterwards leaves it
+        greyed out: it says "Stop" and cannot be clicked, which reads as
+        a broken button rather than as a disabled one.
+        """
+        self.btn.configure(text=text)
+        # configure(state=...) is the one that works both ways. The ttk
+        # state() call sets the flag but does not clear a "disabled" that
+        # configure() put there, so the button stayed greyed out.
+        self.btn.configure(state="normal" if enabled else "disabled")
 
     def _toggle(self):
         if self.worker and self.worker.is_alive():
@@ -313,7 +327,16 @@ class App(tk.Tk):
                     return
 
         self._append(f"starting on {self.host_var.get()}:{port} ...")
-        self.btn.configure(text="Stop", state="disabled")
+        # The button is NOT disabled while starting. Disabling it here
+        # and re-enabling it from the worker's "started" event loses the
+        # race when the two happen in the same event-loop turn: the
+        # disable is applied last and the button is left greyed out,
+        # saying "Stop" and refusing to be clicked. That is exactly what
+        # a user reported.
+        #
+        # Instead the button stays live and _toggle is idempotent:
+        # clicking Stop while the listener is still starting stops it.
+        self._set_button("Stop")
         self.worker = ListenerThread(self.host_var.get(), port,
                                      L.TOKEN_FILE, cert, key, self.events)
         self.worker.start()
@@ -322,7 +345,7 @@ class App(tk.Tk):
         self._append("stopping ...")
         if self.worker:
             self.worker.stop()
-        self.btn.configure(text="Start")
+        self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.send_btn.configure(state="disabled")

@@ -889,10 +889,52 @@ if _have_display:
             check("the window does show it as sent",
                   "-> from the window" in _text, _text[-160:])
 
+            # Click the button. Calling _stop() directly would not catch
+            # the button being disabled -- it says "Stop" and cannot be
+            # clicked, which is exactly what a user sees.
+            _app._set_button("Stop")
+            _app.btn.invoke()
+            time.sleep(1.2)
+            check("clicking Stop stops the listener",
+                  _app.btn.cget("text") == "Start", _app.btn.cget("text"))
+            check("the button is clickable again",
+                  "disabled" not in _app.btn.state(),
+                  str(_app.btn.state()))
+
+            # and the same for Start: it must be clickable, and it must
+            # become "Stop" and stay clickable.
+            #
+            # The stop is asynchronous -- the button's command returns
+            # before the worker has finished -- so wait for the worker
+            # to actually be gone. Otherwise the next click lands while
+            # the old one is still winding down, the toggle sees a live
+            # worker and stops it again instead of starting.
+            _deadline = time.time() + 15
+            while time.time() < _deadline:
+                if not (_app.worker and _app.worker.is_alive()):
+                    break
+                time.sleep(0.2)
+            check("the worker is really gone before the next click",
+                  not (_app.worker and _app.worker.is_alive()),
+                  "still running")
+
+            _app.btn.invoke()
+            _deadline = time.time() + 25
+            while time.time() < _deadline:
+                _app._drain()
+                if _app.worker and _app.worker.is_alive() and _app.token:
+                    break
+                time.sleep(0.2)
+            check("clicking Start starts the listener",
+                  _app.worker is not None and _app.worker.is_alive(),
+                  _app.worker.error if _app.worker else "?")
+            check("the button says Stop and can be clicked",
+                  _app.btn.cget("text") == "Stop"
+                  and "disabled" not in _app.btn.state(),
+                  f"{_app.btn.cget('text')} {str(_app.btn.state())}")
+
             _app._stop()
             time.sleep(1.0)
-            check("the GUI stops the listener",
-                  _app.btn.cget("text") == "Start", _app.btn.cget("text"))
 
         _app.destroy()
         _root.destroy()
