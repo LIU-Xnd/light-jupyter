@@ -70,6 +70,7 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
 | **v2.2.0** | packaged as `lj`, one command with two subcommands; `lj`, `lj -h` and `lj --help` print the top-level usage. |
 | **v2.3.0** | `listen` proves the port is really its own before printing a URL, and ctrl-c shuts down and releases it. |
 | **v2.4.0** | `lj dialer` is a two-way REPL: type to send, inbound messages appear live with timestamps. |
+| **v2.4.1** | the self-test no longer leaves listeners behind; the REPL section survives Linux. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured

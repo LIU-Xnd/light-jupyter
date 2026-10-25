@@ -3,6 +3,7 @@
     python -m lj.selftest          # from anywhere, once installed
     python lj/selftest.py          # straight from a clone
 """
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -618,6 +619,27 @@ _got = json.loads(get(PORT, "/msg", TOK)[1])
 check("what the REPL sent reached the page",
       "hello from the repl" in _got.get("msgs", [])
       and "via slash" in _got.get("msgs", []), str(_got)[:120])
+
+print("\n=== 6e. the version is consistent ===")
+# This has drifted twice: pyproject said 2.2.0 while the tag said 2.3.0,
+# and __version__ said 2.2.0 while the installed dist said 2.1.2. The
+# installed version is what a user actually sees, so check all three.
+_pyproject = (HERE.parent / "pyproject.toml").read_text(encoding="utf-8")
+_m = re.search(r'version\s*=\s*"([^"]+)"', _pyproject)
+_declared = _m.group(1) if _m else ""
+_src = (HERE / "__init__.py").read_text(encoding="utf-8")
+_m2 = re.search(r'__version__\s*=\s*"([^"]+)"', _src)
+_fallback = _m2.group(1) if _m2 else ""
+try:
+    _installed = importlib.metadata.version("lj")
+except Exception:
+    _installed = "(not installed)"
+
+check("pyproject declares a version", bool(_declared), _declared)
+check("the fallback __version__ matches pyproject",
+      _fallback == _declared, f"{_fallback} vs {_declared}")
+check("the installed distribution matches pyproject",
+      _installed == _declared, f"{_installed} vs {_declared}")
 
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
