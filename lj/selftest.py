@@ -35,6 +35,142 @@ def check(name, cond, detail=""):
     return cond
 
 
+_KIDS = []          # every child process we start, so none is left running
+
+# On Windows, children started without a new process group are killed with
+# the parent; giving them their own group is what lets a group kill work.
+_NEW_GROUP = (subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
+
+
+def _reap(kid, timeout=6):
+    """Stop a child and wait for it. Best effort: never raises."""
+    try:
+        if kid.poll() is None:
+            kid.terminate()
+        try:
+            kid.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kid.kill()
+            try:
+                kid.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+    except Exception:
+        pass
+
+
+def _kill_tree(kid):
+    """Kill a child and everything it started."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(kid.pid), "/T", "/F"],
+                           capture_output=True, timeout=20)
+        else:
+            os.killpg(os.getpgid(kid.pid), signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        kid.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def _alive(pid: int) -> bool:
+    """Is this pid still running?
+
+    Not os.kill(pid, 0): on Windows that does not probe, it signals, and
+    it raises for a process that is very much alive -- so every stale pid
+    looked dead and nothing was ever cleaned up. tasklist is the reliable
+    check there; on POSIX, signal 0 is the right probe.
+    """
+    if os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True, timeout=20).stdout
+            return str(pid) in out
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+_STALE = pathlib.Path(tempfile.gettempdir()) / "lj_selftest_children.txt"
+
+
+def _reap_stale():
+    """Kill listeners left behind by a previous run that was killed.
+
+    atexit covers a normal exit and an exception. It does NOT cover a run
+    that is killed outright -- the terminal closed, or a timeout fired --
+    and then the children stay bound to their ports. That is how 33
+    listeners piled up on this machine. The pid file lets the next run
+    clean up after the last one.
+    """
+    try:
+        if not _STALE.exists():
+            return
+        for line in _STALE.read_text().splitlines():
+            line = line.strip()
+            if not line.isdigit():
+                continue
+            pid = int(line)
+            if pid == os.getpid():
+                continue
+            if _alive(pid):
+                _kill_tree_pid(pid)
+        _STALE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _kill_tree_pid(pid: int):
+    """Kill a pid that was orphaned by a previous run.
+
+    The /T flag walks the tree from the parent, and the parent is already
+    dead by the time the next run gets here, so /T finds nothing to kill.
+    The pid itself has to be signalled.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, timeout=20)
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
+    # give the OS a moment to reap it
+    for _ in range(20):
+        if not _alive(pid):
+            return
+        time.sleep(0.1)
+
+
+def _remember(kid):
+    """Record a child so a later run can clean it up if this one dies."""
+    _KIDS.append(kid)
+    try:
+        with _STALE.open("a") as fh:
+            fh.write(f"{kid.pid}{chr(10)}")
+    except Exception:
+        pass
+
+
+def _reap_all():
+    for _k in _KIDS:
+        _reap(_k)
+
+
+import atexit
+atexit.register(_reap_all)      # runs on any exit, including an exception
+
+
+_reap_stale()      # clean up after a run that was killed
+
+
 def free_port():
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -117,6 +253,7 @@ proc = subprocess.Popen([PY, "-m", "lj", "listen",
                          "--regen-token"],
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True)
+_remember(proc)
 deadline = time.time() + 20
 up = False
 while time.time() < deadline:
@@ -186,6 +323,7 @@ p2 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT2), "--token-file", str(tmp / "t3"),
                        "--regen-token"],
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+_remember(p2)
 deadline = time.time() + 20
 while time.time() < deadline:
     try:
@@ -271,6 +409,7 @@ p3 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT3), "--token-file", str(tmp / "t4"),
                        "--regen-token"],
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+_remember(p3)
 deadline = time.time() + 20
 while time.time() < deadline:
     try:
@@ -393,6 +532,7 @@ else:
 _p = subprocess.Popen([PY, "-m", "lj", "listen", "--port", str(_ctrl_port),
                        "--host", "127.0.0.1", "--token-file", str(tmp / "t7")],
                       **_kwargs)
+_remember(_p)
 deadline = time.time() + 20
 _up = False
 while time.time() < deadline:
@@ -436,6 +576,7 @@ _rp = subprocess.Popen(
      "--target", f"127.0.0.1:{PORT}", "--token", TOK, "--poll", "0.3"],
     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT, text=True, bufsize=1)
+_remember(_rp)
 
 # The page's message is queued BEFORE the REPL starts, so the poller's
 # first tick finds it. Letting the two race made this check flaky --
@@ -489,18 +630,7 @@ try:
 except urllib.error.HTTPError as e:
     check("a page with no token at all is refused", e.code == 401, str(e.code))
 
-p3.terminate()
-try:
-    p3.wait(timeout=8)
-except subprocess.TimeoutExpired:
-    p3.kill()
-
-for p in (proc, p2):
-    p.terminate()
-    try:
-        p.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        p.kill()
+_reap_all()
 
 print("\n" + "=" * 60)
 print(f"{len(PASS)} passed, {len(FAIL)} failed")
