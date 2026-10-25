@@ -71,12 +71,41 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
 | **v2.3.0** | `listen` proves the port is really its own before printing a URL, and ctrl-c shuts down and releases it. |
 | **v2.4.0** | `lj dialer` is a two-way REPL: type to send, inbound messages appear live with timestamps. |
 | **v2.4.1** | the self-test no longer leaves listeners behind; the REPL section survives Linux. |
+| **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
+| **v2.6.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
 end to end, it was the only thing standing between the two machines, and
 plain HTTP is easier to debug, proxy and extend. v1 has been removed; the
 tags up to v1.2.0 still hold it if you need it.
+
+## Encryption
+
+`lj` speaks plain HTTP by default. To encrypt the traffic, give the
+listener a certificate:
+
+```bash
+lj listen --gen-cert ~/.lj      # writes cert.pem and key.pem, then exits
+lj listen --cert ~/.lj/cert.pem # serves https
+```
+
+The banner then prints `https://` URLs, and the other side is told to
+trust that certificate:
+
+```bash
+lj dialer --target https://192.168.0.1:10000 --token lj_... \
+          --ca ~/.lj/cert.pem
+```
+
+`--ca` trusts that one certificate. `--insecure` trusts any certificate
+at all, which removes the point of using https -- it is for testing on a
+network you control, and it says so when it runs.
+
+The certificate is self-signed, so it has to be handed over explicitly;
+there is no CA to ask. `ssl` is in the standard library, so this costs no
+dependency -- only `openssl` on the machine that generates the
+certificate.
 
 ## Endpoints
 

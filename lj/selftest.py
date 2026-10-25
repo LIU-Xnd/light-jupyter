@@ -88,7 +88,7 @@ def _alive(pid: int) -> bool:
         try:
             out = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=20).stdout
+                capture_output=True, text=True, errors="replace", timeout=20).stdout
             return str(pid) in out
         except Exception:
             return False
@@ -190,10 +190,15 @@ L = load("lj.listen")
 D = load("lj.dialer")
 
 
-def get(port, path, token=None, timeout=10):
+def get(port, path, token=None, timeout=10, tls_ca=None):
     h = {"X-LJ-Token": token} if token else {}
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=h)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    scheme = "https" if tls_ca else "http"
+    req = urllib.request.Request(f"{scheme}://127.0.0.1:{port}{path}", headers=h)
+    ctx = None
+    if tls_ca:
+        import ssl
+        ctx = ssl.create_default_context(cafile=tls_ca)
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
         return r.status, r.read().decode("utf-8", "replace")
 
 
@@ -239,10 +244,16 @@ check("regen-token changes it", c != a)
 # ---------------------------------------------------------------- parsing
 
 print("\n=== 2. target parsing ===")
-check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999))
-check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000))
-check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080))
-check("trailing colon", D.split_target("host:") == ("host", 10000))
+check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999, "http"))
+check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000, "http"))
+check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080, "http"))
+check("trailing colon", D.split_target("host:") == ("host", 10000, "http"))
+check("https:// is recognised",
+      D.split_target("https://1.2.3.4:9999") == ("1.2.3.4", 9999, "https"))
+check("http:// is recognised",
+      D.split_target("http://1.2.3.4:9999") == ("1.2.3.4", 9999, "http"))
+check("the scheme is case-insensitive",
+      D.split_target("HTTPS://1.2.3.4:9999") == ("1.2.3.4", 9999, "https"))
 
 # ---------------------------------------------------------------- server
 
@@ -323,7 +334,7 @@ TOK2 = L.mint_token()
 p2 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT2), "--token-file", str(tmp / "t3"),
                        "--regen-token"],
-                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
 _remember(p2)
 deadline = time.time() + 20
 while time.time() < deadline:
@@ -337,7 +348,7 @@ with open(tmp / "t3") as fh:
 
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", TOK2,
-                    "-m", "from the dialer"], capture_output=True, text=True,
+                    "-m", "from the dialer"], capture_output=True, text=True, errors="replace",
                    timeout=30)
 check("dialer exits 0", r.returncode == 0, r.stdout[-200:] + r.stderr[-200:])
 check("dialer reports 204", "204" in r.stdout, r.stdout[-200:])
@@ -347,7 +358,7 @@ check("message arrived", json.loads(body)["msgs"] == ["from the dialer"], body[:
 
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", "lj_bad",
-                    "-m", "nope"], capture_output=True, text=True, timeout=30)
+                    "-m", "nope"], capture_output=True, text=True, errors="replace", timeout=30)
 check("dialer with a bad token fails", r.returncode == 1, str(r.returncode))
 check("dialer says the token was rejected",
       "token rejected" in r.stdout, r.stdout[-160:])
@@ -355,7 +366,7 @@ check("dialer says the token was rejected",
 dead = free_port()
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{dead}", "--token", TOK2,
-                    "-m", "x"], capture_output=True, text=True, timeout=30)
+                    "-m", "x"], capture_output=True, text=True, errors="replace", timeout=30)
 check("dialer to a dead port fails cleanly", r.returncode == 1)
 check("dialer explains it cannot connect",
       "cannot reach" in r.stdout, r.stdout[-160:])
@@ -363,7 +374,7 @@ check("dialer explains it cannot connect",
 # stdin
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", TOK2],
-                   input="piped text\n", capture_output=True, text=True,
+                   input="piped text\n", capture_output=True, text=True, errors="replace",
                    timeout=30)
 status, body = get(PORT2, "/msg", TOK2)
 check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:120])
@@ -409,7 +420,7 @@ TOK3 = L.mint_token()
 p3 = subprocess.Popen([PY, "-m", "lj", "listen",
                        "--port", str(PORT3), "--token-file", str(tmp / "t4"),
                        "--regen-token"],
-                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
 _remember(p3)
 deadline = time.time() + 20
 while time.time() < deadline:
@@ -453,20 +464,20 @@ for bad in ("lj_wrong", ""):
 # the dialer's --listen must pick up what the page posted
 d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
-                    "--listen", "--once"], capture_output=True, text=True,
+                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
                    timeout=30)
 check("dialer --listen exits 0", d.returncode == 0, d.stdout[-200:])
 post(PORT3, "/msg", "browser says hi", TOK3)
 d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
-                    "--listen", "--once"], capture_output=True, text=True,
+                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
                    timeout=30)
 check("dialer --listen prints the browser's message",
       "browser says hi" in d.stdout, d.stdout[-200:])
 
 d = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT3}", "--token", "lj_bad",
-                    "--listen", "--once"], capture_output=True, text=True,
+                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
                    timeout=30)
 check("dialer --listen with a bad token fails", d.returncode == 1)
 
@@ -480,7 +491,7 @@ print("\n=== 6b. the banner is copy-pasteable ===")
 _b = subprocess.run([PY, "-m", "lj", "listen", "--print-only",
                      "--port", "10999", "--token-file",
                      str(tmp / "t5"), "--regen-token"],
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True, errors="replace", timeout=30)
 _out = _b.stdout
 _url = [l for l in _out.splitlines() if "browser :" in l]
 check("listen prints a browser line", bool(_url), _out[-200:])
@@ -506,7 +517,7 @@ _thief.listen(4)                      # holds the port, answers nothing like lj
 
 _r = subprocess.run([PY, "-m", "lj", "listen", "--port", str(_held),
                      "--host", "127.0.0.1", "--token-file", str(tmp / "t6")],
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True, errors="replace", timeout=30)
 _thief.close()
 check("a port held by another process is refused",
       _r.returncode != 0, f"rc={_r.returncode}")
@@ -520,7 +531,7 @@ check("no browser URL is printed when the check fails",
 import signal as _signal
 
 _ctrl_port = free_port()
-_kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+_kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
 if os.name == "nt":
     # Windows cannot deliver SIGINT from outside a process. CTRL_BREAK_EVENT
     # is the equivalent, and it only reaches a child that has its own
@@ -661,6 +672,91 @@ else:
     # the installed metadata are what there is to compare
     check("the fallback __version__ matches the installed distribution",
           _fallback == _installed, f"{_fallback} vs {_installed}")
+
+print("\n=== 6f. https ===")
+# Encryption has to be checked in the direction that matters: a client
+# that does not trust the certificate must be refused, and plain http
+# against a TLS port must fail. If only the happy path is tested, a
+# broken --ca that silently skips verification would still pass.
+_tls_dir = tmp / "tls"
+_r = subprocess.run([PY, "-m", "lj", "listen", "--gen-cert", str(_tls_dir)],
+                    capture_output=True, text=True, errors="replace", timeout=60)
+check("--gen-cert makes a certificate", (_tls_dir / "cert.pem").exists()
+      and (_tls_dir / "key.pem").exists(), _r.stderr[-200:])
+check("--gen-cert says what to do with the certificate",
+      "--ca" in (_r.stdout or ""), (_r.stdout or "")[-160:])
+
+_tls_port = free_port()
+# stdout goes to a FILE, not a pipe: a pipe nobody drains fills up, the
+# child blocks writing to it, and the reap's wait() then blocks forever
+_tls_out = open(tmp / "tls_listener.log", "w", encoding="utf-8")
+_tls = subprocess.Popen(
+    [PY, "-m", "lj", "listen", "--port", str(_tls_port), "--host", "127.0.0.1",
+     "--cert", str(_tls_dir / "cert.pem"), "--key", str(_tls_dir / "key.pem"),
+     "--token-file", str(tmp / "t8")],
+    stdout=_tls_out, stderr=subprocess.STDOUT)
+_remember(_tls)
+# wait for the port to answer rather than sleeping a fixed amount: the
+# listener has to read the cert, start serving and write the token file,
+# and a fixed sleep is a race on a loaded machine
+_deadline = time.time() + 25
+_up = False
+while time.time() < _deadline:
+    if _tls.poll() is not None:
+        break
+    try:
+        import socket as _sock
+        _s = _sock.create_connection(("127.0.0.1", _tls_port), timeout=0.5)
+        _s.close()
+        _up = True
+        break
+    except OSError:
+        time.sleep(0.3)
+check("the TLS listener came up", _up)
+# the token file is written at startup; if it is not there yet, the
+# listener is not ready and reading it would raise
+time.sleep(0.5)
+
+if _up and _tls.poll() is None:
+    _tls_tok = (tmp / "t8").read_text().strip()
+    _ca = str(_tls_dir / "cert.pem")
+
+    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
+                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
+                         "--ca", _ca, "-m", "over tls"],
+                        capture_output=True, text=True, errors="replace", timeout=60)
+    check("a dialer that trusts the certificate can send",
+          _r.returncode == 0 and "204" in (_r.stdout or ""),
+          (_r.stdout or "")[-120:])
+
+    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
+                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
+                         "-m", "should not get through"],
+                        capture_output=True, text=True, errors="replace", timeout=60)
+    check("a dialer that does not trust the certificate is refused",
+          _r.returncode != 0, (_r.stdout or "")[-120:])
+
+    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
+                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
+                         "--insecure", "-m", "insecure path"],
+                        capture_output=True, text=True, errors="replace", timeout=60)
+    check("--insecure gets through", _r.returncode == 0 and "204" in (_r.stdout or ""),
+          (_r.stdout or "")[-120:])
+
+    _got = json.loads(get(_tls_port, "/msg", _tls_tok, tls_ca=_ca)[1])
+    check("the message arrived over TLS",
+          "over tls" in _got.get("msgs", []), str(_got)[:100])
+
+    # plain http against a TLS port must fail
+    try:
+        import urllib.request as _ur
+        _req = _ur.Request(f"http://127.0.0.1:{_tls_port}/msg",
+                            headers={"X-LJ-Token": _tls_tok})
+        with _ur.urlopen(_req, timeout=10) as _rr:
+            _rr.read()
+        check("plain http against a TLS port fails", False, "it succeeded")
+    except Exception:
+        check("plain http against a TLS port fails", True)
 
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")

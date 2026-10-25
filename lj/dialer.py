@@ -32,20 +32,50 @@ def log(msg: str = "") -> None:
 
 
 def split_target(spec: str) -> tuple:
-    """'host:port', bare 'host' (default port), or a bare port."""
+    """'host:port', 'https://host:port', bare 'host', or a bare port.
+
+    Returns (host, port, scheme). The scheme decides whether the requests
+    are encrypted; 'host:port' stays plain HTTP so an old target still
+    works unchanged.
+    """
     spec = spec.strip()
+    scheme = "http"
+    for _s in ("https://", "http://"):
+        if spec.lower().startswith(_s):
+            scheme = _s[:-3]
+            spec = spec[len(_s):]
+            break
     if spec.isdigit():
-        return "127.0.0.1", int(spec)
+        return "127.0.0.1", int(spec), scheme
     host, sep, port = spec.rpartition(":")
     if not sep:
-        return spec, 10000
+        return spec, 10000, scheme
     if not port:                  # "host:" -- port left off, take the default
-        return (host or "127.0.0.1"), 10000
+        return (host or "127.0.0.1"), 10000, scheme
     if not port.isdigit():
         # an IPv6 literal, or junk: hand it back as a bare host and let the
         # connect fail with a clear socket error rather than a parse error
-        return spec, 10000
-    return (host or "127.0.0.1"), int(port)
+        return spec, 10000, scheme
+    return (host or "127.0.0.1"), int(port), scheme
+
+
+def make_context(ca: str = None, insecure: bool = False):
+    """An SSL context for https, or None for plain http.
+
+    --ca trusts one specific certificate, which is what a self-signed one
+    needs. --insecure trusts anything -- fine for a test over a network you
+    control, useless as security, so it says so out loud.
+    """
+    if not ca and not insecure:
+        return None
+    import ssl
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    ctx = ssl.create_default_context(cafile=ca)
+    return ctx
 
 
 def read_message(args) -> str:
@@ -60,17 +90,17 @@ def read_message(args) -> str:
 
 
 def send(host: str, port: int, token: str, msg: str,
-         timeout: float) -> tuple:
+         timeout: float, scheme: str = "http", ctx=None) -> tuple:
     """POST one message. Returns (status, detail)."""
     # /in is the far-side-inbound endpoint; the browser's own sends use /msg
-    url = f"http://{host}:{port}/in"
+    url = f"{scheme}://{host}:{port}/in"
     req = urllib.request.Request(
         url, data=msg.encode("utf-8"), method="POST",
         headers={"X-LJ-Token": token,
                  "Content-Type": "text/plain; charset=utf-8"})
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
             return r.status, f"{time.time() - t0:.2f}s"
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace").strip()
@@ -83,19 +113,21 @@ def send(host: str, port: int, token: str, msg: str,
         return None, str(e)
 
 
-def fetch(host: str, port: int, token: str, timeout: float) -> str:
+def fetch(host: str, port: int, token: str, timeout: float,
+          scheme: str = "http", ctx=None) -> str:
     """Read the queue back, the way the browser would."""
-    url = f"http://{host}:{port}/send"
+    url = f"{scheme}://{host}:{port}/send"
     req = urllib.request.Request(url, headers={"X-LJ-Token": token})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
             return r.read().decode("utf-8", "replace")
     except Exception as e:
         return f"({type(e).__name__}: {e})"
 
 
 def collect(host: str, port: int, token: str, timeout: float,
-            interval: float, forever: bool, once: bool) -> int:
+            interval: float, forever: bool, once: bool,
+            scheme: str = "http", ctx=None) -> int:
     """Poll for what the browser sends back.
 
     Polling rather than a held connection, on purpose: every request stands
@@ -103,7 +135,7 @@ def collect(host: str, port: int, token: str, timeout: float,
     to be detected and rebuilt. NAT tables expire silently and give no FIN,
     which is what makes a held socket quietly wedge.
     """
-    url = f"http://{host}:{port}/send"
+    url = f"{scheme}://{host}:{port}/send"
     log("")
     log(f"  listening for the browser on {url}")
     log(f"    poll every {interval:g}s")
@@ -112,7 +144,7 @@ def collect(host: str, port: int, token: str, timeout: float,
     while True:
         try:
             req = urllib.request.Request(url, headers={"X-LJ-Token": token})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                 data = json.loads(r.read().decode("utf-8", "replace"))
             for m in data.get("msgs", []):
                 seen += 1
@@ -166,7 +198,7 @@ def _emit(prefix: str, text: str) -> None:
 
 
 def repl(host: str, port: int, token: str, timeout: float,
-         interval: float) -> int:
+         interval: float, scheme: str = "http", ctx=None) -> int:
     """Interactive two-way session.
 
     A background thread polls /send for what the browser sends while
@@ -182,9 +214,9 @@ def repl(host: str, port: int, token: str, timeout: float,
         while not stop.is_set():
             try:
                 req = urllib.request.Request(
-                    f"http://{host}:{port}/send",
+                    f"{scheme}://{host}:{port}/send",
                     headers={"X-LJ-Token": token})
-                with urllib.request.urlopen(req, timeout=timeout) as r:
+                with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                     data = json.loads(r.read().decode("utf-8", "replace"))
                 for m in data.get("msgs", []):
                     _emit("<--", m)
@@ -199,7 +231,7 @@ def repl(host: str, port: int, token: str, timeout: float,
 
     print("", flush=True)
     print("  lj dialer -- interactive", flush=True)
-    print(f"    connected to {host}:{port}", flush=True)
+    print(f"    connected to {scheme}://{host}:{port}", flush=True)
     print("    type a message and press enter; /help for commands",
           flush=True)
     print("    inbound messages are shown with their time; /quit to leave",
@@ -230,7 +262,8 @@ def repl(host: str, port: int, token: str, timeout: float,
                 if not line:
                     continue
 
-            status, detail = send(host, port, token, line, timeout)
+            status, detail = send(host, port, token, line, timeout,
+                                  scheme, ctx)
             if status in (200, 204):
                 _emit("-->", line)
             else:
@@ -247,8 +280,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="lj dialer",
         description="push a message to an lj_listen that is holding the "
                     "port; this side only ever dials out")
-    p.add_argument("--target", required=True, metavar="IP[:PORT]",
-                   help="where lj_listen is listening (default port 10000)")
+    p.add_argument("--target", required=True, metavar="[https://]IP[:PORT]",
+                   help="where lj listen is listening (default port 10000). "
+                        "Prefix with https:// to encrypt the traffic")
     p.add_argument("--token", required=True,
                    help="the token lj_listen printed")
     p.add_argument("--message", "-m", default=None,
@@ -275,24 +309,47 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--poll", type=float, default=1.0, metavar="SEC",
                    help="how often the REPL checks for new messages "
                         "(default: 1)")
+    p.add_argument("--ca", metavar="PEM", default=None,
+                   help="trust this certificate (PEM) -- use it for a "
+                        "self-signed one, with --target https://...")
+    p.add_argument("--insecure", action="store_true",
+                   help="accept any certificate, including a self-signed "
+                        "one. This removes the point of using https; use it "
+                        "only on a network you control")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    host, port = split_target(args.target)
+    host, port, scheme = split_target(args.target)
+
+    if args.ca and scheme != "https":
+        log("--ca only applies to an https:// target")
+        return 2
+    if args.insecure and scheme != "https":
+        log("--insecure only applies to an https:// target")
+        return 2
+    if args.insecure:
+        log("  !! --insecure: any certificate is accepted, so this is not "
+            "protected against anyone watching")
+    try:
+        ctx = make_context(args.ca, args.insecure)
+    except (OSError, ValueError) as e:
+        log(f"cannot use the certificate: {e}")
+        return 2
 
     if args.listen:
         return collect(host, port, args.token, args.timeout,
                        args.interval, forever=not args.once,
-                       once=args.once)
+                       once=args.once, scheme=scheme, ctx=ctx)
 
     # REPL when asked for, or when there is nothing to send and a human is
     # there to type. Piped stdin or an explicit -m is a one-shot send, so
     # scripts do not suddenly enter an interactive session.
     have_msg = args.message is not None or args.file or not sys.stdin.isatty()
     if args.interactive or (not have_msg and sys.stdin.isatty()):
-        return repl(host, port, args.token, args.timeout, args.poll)
+        return repl(host, port, args.token, args.timeout, args.poll,
+                    scheme, ctx)
 
     msg = read_message(args)
     if not msg:
@@ -301,14 +358,15 @@ def main(argv=None) -> int:
 
     log("")
     log("  lj_dialer")
-    log(f"    target : {host}:{port}")
+    log(f"    target : {scheme}://{host}:{port}")
     log(f"    sends  : {len(msg)} chars")
     log("")
 
     failures = 0
     for i in range(1, args.repeat + 1):
         stamp = time.strftime("%H:%M:%S")
-        status, detail = send(host, port, args.token, msg, args.timeout)
+        status, detail = send(host, port, args.token, msg, args.timeout,
+                              scheme, ctx)
         if status in (200, 204):
             log(f"  [{stamp}] {i}/{args.repeat} -> {status} in {detail}")
         else:
@@ -320,7 +378,7 @@ def main(argv=None) -> int:
     if args.show:
         log("")
         log("  queue as the browser sees it:")
-        log(f"    {fetch(host, port, args.token, args.timeout)}")
+        log(f"    {fetch(host, port, args.token, args.timeout, scheme, ctx)}")
 
     log("")
     return 1 if failures else 0
