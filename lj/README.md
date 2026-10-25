@@ -204,7 +204,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-123 checks: token properties, target parsing, the HTTP surface, that a wrong
+125 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
 handles its failure modes, that https really rejects an untrusted

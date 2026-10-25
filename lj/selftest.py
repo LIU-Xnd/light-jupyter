@@ -901,6 +901,17 @@ if _have_display:
                   "disabled" not in _app.btn.state(),
                   str(_app.btn.state()))
 
+            # The log has to say the stop finished. A log that stops at
+            # "stopping ..." reads as a hang, and the user cannot tell
+            # a finished stop from a stuck one.
+            _log = _app.log.get("1.0", "end")
+            check("the log says the listener stopped",
+                  "stopped" in _log,
+                  repr(_log.strip().splitlines()[-1] if _log.strip() else ""))
+            check("the log does not stop at 'stopping ...'",
+                  _log.strip().splitlines()[-1].strip() != "stopping ...",
+                  repr(_log.strip().splitlines()[-1]))
+
             # and the same for Start: it must be clickable, and it must
             # become "Stop" and stay clickable.
             #

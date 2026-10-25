@@ -376,6 +376,7 @@ class App(tk.Tk):
 
     def _stop(self):
         self._append("stopping ...")
+        was_running = bool(self.worker and self.worker.is_alive())
         if self.worker:
             self.worker.stop()
             # Wait for the port to be released. The server closes its
@@ -390,6 +391,12 @@ class App(tk.Tk):
         self.open_btn.configure(state="disabled")
         self.send_btn.configure(state="disabled")
         self.url_var.set("not running")
+        # Say what happened. Without this the log stops at "stopping ..."
+        # and the user cannot tell a finished stop from a hung one.
+        if was_running:
+            self._append("stopped")
+        else:
+            self._append("nothing was running")
 
     def _wait_port_free(self, timeout: float = 10.0) -> bool:
         """Wait until nothing is listening on our port any more.
@@ -483,7 +490,11 @@ class App(tk.Tk):
     def _append(self, line):
         self.log.configure(state="normal")
         self.log.insert("end", line.rstrip() + "\n")
-        self.log.see("end")
+        # see("end") puts the CURSOR at the end, which is one past the
+        # last character -- the last line can end up just below the
+        # visible area. see("end-1c") scrolls to the last character
+        # instead, so the newest line is actually on screen.
+        self.log.see("end-1c")
         self.log.configure(state="disabled")
 
     def _tls_changed(self):
