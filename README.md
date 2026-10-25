@@ -247,13 +247,17 @@ git@github.com:LIU-Xnd/light-jupyter.git` works the same.
 There is also an installer, with the window and a Start Menu shortcut:
 
 ```bash
-pyappdist build            # -> appdist/windows/dist/lj-<version>.msi
+python tools/build_msi.py  # -> appdist/windows/dist/lj-<version>.msi
 ```
 
 It bundles a Python runtime, so it installs on a machine with nothing on
 it -- no Python, no pip, no conda. The build needs
 [WiX](https://wixtoolset.org) (v6 or later) and `pyappdist`; point
 `PYAPPDIST_WIN_WIX` at `wix.exe` if it is not on PATH.
+
+The installer is a normal wizard: a licence page, a **Destination
+Folder** page where you can change the folder or browse for one, a
+progress bar, and a page that says it is done.
 
 The MSI is unsigned, so Windows will warn about an unknown publisher. That
 is the price of not having a signing certificate.

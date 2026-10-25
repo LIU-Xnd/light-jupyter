@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lj"
-version = "2.8.3"
+version = "2.8.4"
 description = "A minimal egress-only message channel: one side holds the port, the other dials out"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -53,3 +53,8 @@ format = "msi"
 manufacturer = "zlab"
 scope = "user"
 upgrade-code = "A768FDC5-E22D-4204-B7BE-D49D5005E98F"
+# A licence page is what makes pyappdist emit a <UI> section and pass
+# -ext WixToolset.UI.wixext to wix. Without it the MSI uses Windows'
+# bare progress bar: it fills up and the window disappears, with no
+# "finished" page and nothing to click.
+license = "assets/license.rtf"

@@ -81,6 +81,30 @@ Things that are not obvious and cost time to rediscover:
 - The pipeline can be run a stage at a time -- `build-wheels`,
   `fetch-runtime`, `build-image`, `build-launchers`, `gen-wix` -- which
   is how you rebuild the MSI without re-downloading the runtime.
+- **`tools/build_msi.py` is the build to use**, not `pyappdist build`.
+  It runs the stages one at a time, switches the UI set and calls wix
+  itself, because pyappdist cannot express what the installer needs:
+  - pyappdist only grows a UI when `[tool.pyappdist.targets].license`
+    names an .rtf file. Without one the MSI has no `<UI>` section at
+    all and Windows shows a bare progress bar that closes with nothing
+    said -- no finish page, no folder choice.
+  - it then hardcodes `WixUI_Minimal`, which has no folder page. The
+    stock `WixUI_InstallDir` is the same set plus a "Destination
+    Folder" page and a browse dialog, so the .wxs is edited between
+    `gen-wix` and the wix build.
+  - running the stages by hand means the files the .wxs refers to by
+    bare name (the licence RTF and the product icon) are not staged
+    for it, so the script copies them next to the .wxs itself.
+- **The UI extension has to be fetched.** wix looks for it under
+  `<cwd>/.wix/extensions/<id>/<version>/` -- relative to the working
+  directory, not the user's home -- and the WiX install ships only an
+  empty placeholder. The real payload is the NuGet package
+  `wixtoolset.ui.wixext`; the build script downloads it if it is
+  missing. `wix extension add -g` does not do it: it needs the network
+  and does nothing when the package is already unpacked this way.
+- `INSTALLFOLDER` is the public property, so a custom folder is
+  `msiexec /i lj.msi INSTALLFOLDER=D:\somewhere\lj`. The directory
+  page binds to `WIXUI_INSTALLDIR` and writes it back there.
 - The MSI is unsigned, so Windows warns about an unknown publisher.
   `pyappdist` has a `sign:` stage for when there is a certificate.
 - The build prints

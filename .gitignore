@@ -32,3 +32,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.swp
+
+# the WiX extension cache the installer build uses
+.wix/
