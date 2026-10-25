@@ -8,12 +8,15 @@ port, and POSTs a message.
     python -m lj.dialer --target ... --token ... -m "hello"
     python -m lj.dialer --target ... --token ... --repeat 5 --interval 4
 
-SCOPE -- messages only, deliberately
---------------------------------------
-Requests and responses are HTTP messages, never opaque byte streams. There
-is no raw/stream mode here and one should not be added: see the scope note
-in lj.listen. Remote shells belong to ssh, which already handles the PTY,
-the flow control and the encryption.
+SCOPE -- messages only
+-----------------------
+This side passes messages. The file and terminal operations live in
+lj.remote, which is the daemon that does the work; this one just
+sends text.
+
+Requests and responses are HTTP messages, never opaque byte streams.
+There is no raw/stream mode here and one should not be added: see the
+scope note in lj.listen.
 """
 
 import argparse

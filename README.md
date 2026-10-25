@@ -1,28 +1,36 @@
 # lj
 
-A minimal, egress-only channel. One side holds a port, the other dials out
-to it. No inbound port is needed on the machine that cannot be reached.
+A file manager and a terminal for a machine you cannot reach.
+
+One side holds a port, the other dials out to it. No inbound port is needed
+on the machine that cannot be reached. Open the page in a browser and you
+can browse that machine's files, edit them, move them around, and run
+commands on it -- with the colour they were printed in.
 
 ```
 repo/
   pyproject.toml            <- packaging metadata; the package sits one level
   lj/                          below it, or the install silently fails
     __init__.py
-    listen.py                 lj listen
-    dialer.py                 lj dialer
+    listen.py                 lj listen      the side that holds the port
+    remote.py                 lj remote      the far side's worker
+    agent.py                     the file and command operations
+    wire.py                      the command/result protocol
+    page.py                      the browser UI
+    dialer.py                 lj dialer      messages only
     selftest.py               python -m lj.selftest
 
 machine A  (no inbound port)            machine B  (holds the port)
-  lj dialer  --POST /in--------------->  lj listen  :10000
+  lj remote  --POST /res-------------->  lj listen  :10000
       ^                                    ^
-      |                          GET  /msg |  page polls: renders arrivals
-      +---- GET /send -------------- POST /msg   page posts: text to send
+      |                           GET /cmd |  the far side collects work
+      +---- GET /cmd ------------- POST /cmd   the browser asks for something
                                           ^
                                           |
                                         browser
 ```
 
-Two stdlib-only modules. No dependencies, no install step.
+Standard library only. No dependencies, no install step.
 
 ## Use
 
@@ -33,7 +41,7 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 2.7.1)
+  lj listen  (light_jupyter 3.0.0)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
@@ -54,9 +62,28 @@ so the token cannot leak into a log or a `Referer` header.
 **On the machine that cannot be reached** - it dials out:
 
 ```bash
+lj remote --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
+```
+
+That is the whole setup. The worker polls the listener, and the browser
+can now browse that machine's files and run commands on it. It runs until
+you stop it.
+
+The far side works inside a root, so a stray path cannot walk the whole
+filesystem:
+
+```bash
+lj remote --target ... --token ... --root /srv/project
+```
+
+`--root` defaults to the current directory.
+
+**Messages still work too**, for the cases where a queue is what you want.
+`lj dialer` is unchanged:
+
+```bash
 lj dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z... -m "hello"
 echo "from a pipe" | lj dialer --target ... --token ...
-lj dialer --target ... --token ... --repeat 10 --interval 4
 ```
 
 ```
@@ -65,17 +92,10 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
   [13:50:57] 3/3 -> 204 in 0.00s
 ```
 
-**With no `-m` and a terminal**, the dialer becomes a two-way REPL: type
-to send, and what the page types appears as it arrives.
-
-```
-you > hello
-  [16:19:55] --> hello
-  [16:19:56] <-- message from the page
-```
-
-`/help`, `/send TEXT`, `/quit` and ctrl-d. Piped input stays a one-shot
-send, so scripts never hang in a prompt.
+With no `-m` and a terminal it becomes a two-way REPL: type to send, and
+what the page types appears as it arrives. `/help`, `/send TEXT`, `/quit`
+and ctrl-d. Piped input stays a one-shot send, so scripts never hang in a
+prompt.
 
 ## Versions
 
@@ -90,6 +110,7 @@ send, so scripts never hang in a prompt.
 | **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
 | **v2.6.0** | the version number, the tag and the installed metadata agree. |
 | **v2.7.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
+| **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. `lj remote` is the far side's worker. |
 
 ## Encryption
 
@@ -134,16 +155,35 @@ lj gui
 
 One path per direction — an endpoint cannot mean both:
 
+**messages**
+
 | method | path | who | meaning |
 |---|---|---|---|
-| `GET` | `/` | anyone | the page (a static shell, no data) |
+| `GET` | `/` | anyone | the page |
 | `POST` | `/in` | far side | push a message to the page |
 | `GET` | `/msg` | page | take the messages that arrived |
 | `POST` | `/msg` | page | send a message to the far side |
 | `GET` | `/send` | far side | take what the browser typed |
 
-All four data endpoints require the token (`X-LJ-Token` header, or the
+**files and commands**
+
+| method | path | who | meaning |
+|---|---|---|---|
+| `POST` | `/cmd` | page | ask the far side to do something |
+| `GET` | `/cmd` | far side | take the work that was asked for |
+| `POST` | `/res` | far side | bring the answer back |
+| `GET` | `/res` | page | take the answers that came back |
+
+Every data endpoint requires the token (`X-LJ-Token` header, or the
 `lj_token` cookie for the page).
+
+Each request carries a sequence number, and the answers carry it back, so
+the page matches them up itself. That means an answer can come back in a
+different order than the requests went out — which happens as soon as two
+operations overlap, and which a request/response design has to allow for.
+
+Both queues are bounded (256 commands, 1024 results). A browser that
+never collects its results cannot make the listener grow without limit.
 
 ## Commands
 
@@ -164,6 +204,23 @@ does, with buttons.
 | `--cert PEM` | serve https with this certificate |
 | `--key PEM` | the private key for `--cert` (default: `key.pem` beside it) |
 | `--gen-cert [DIR]` | generate a self-signed certificate and key (default `~/.lj`) and exit |
+
+### `lj remote`
+
+The far side's worker. It polls the listener, does what the browser asks,
+and brings the answers back. It runs until you stop it.
+
+| flag | |
+|---|---|
+| `--target [https://]IP[:PORT]` | required; defaults to port `10000` |
+| `--token TOKEN` | required |
+| `--root DIR` | the tree the browser may touch (default: the current directory) |
+| `--interval SEC` | how often to poll (default `1.0`) |
+| `--timeout SEC` | how long a command may run (default `30`) |
+| `--ca PEM` | trust this certificate (for an https target) |
+| `--insecure` | accept any certificate -- not protected against anyone watching |
+| `--once` | do one poll and exit |
+| `--print-only` | print the banner and exit |
 
 ### `lj dialer`
 
@@ -203,7 +260,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-125 checks: token properties, target parsing, the HTTP surface, that a wrong
+163 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
 handles its failure modes, that https really rejects an untrusted
@@ -284,28 +341,47 @@ GLIBC_2.14, so it runs on 20.04 and everything newer.
 ## Security
 
 - 256-bit token compared in constant time, stored `0600`
-- a wrong token is rejected on every path (`GET /msg`, `POST /msg`)
+- a wrong token is rejected on every path (`GET /msg`, `POST /msg`,
+  `POST /cmd`, `GET /cmd`, `POST /res`, `GET /res`)
 - the page itself is unauthenticated (a static shell); all data requires
   the token
+- the far side's operations are confined to `--root`: a path that escapes
+  it is refused
 
-## Scope: messages only, deliberately
+**The token is a shell credential now.** Holding it lets someone read,
+write and delete files on the far side and run commands there, with that
+account's rights. It was a messaging credential before; it is a password
+for that machine now. Use HTTPS, or a network you control, and give the
+far side an account you would be willing to lose.
 
-This is a message queue with a web page on it. It is **not** a transport
-for arbitrary byte streams, and there is no raw/stream mode.
+## Scope: a file manager and a command runner
 
-Carrying a shell over it would mean re-implementing what ssh already does
-correctly — PTY allocation, windowing, flow control, reconnection, and
-end-to-end encryption. Worse, forwarding raw bytes would turn the token
-from a message-passing credential into a remote shell credential, which is
-a much larger blast radius than the one it replaces.
+The far side can be asked to list a directory, read a file, write one,
+move it, copy it, delete it, and to run a command and return its output.
 
-For a shell on a server with no inbound ports, use ssh's own mechanism: an
-sshd on a reachable port on the browser's machine, another sshd on the
-server bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled
-out from the server. Real SSH, real encryption, nothing to maintain here.
+**What it is not:** there is no PTY and no byte stream. A command runs to
+completion and its output comes back whole. There is no interactive
+session, no window size, no signal channel and no job control.
 
-`lj/selftest.py` asserts this boundary — it fails if a `/raw`, `/stream`,
-`/ws`, `/shell` or `/exec` endpoint or a `--raw`/`--pty` flag ever appears.
+That is deliberate. A real interactive terminal needs a PTY, a resize
+channel, a signal channel and flow control — and a browser that emulates
+one properly is xterm.js, which is a large dependency to carry for a tool
+whose point is being small. Every operation here is a request that comes
+back whole, so a timeout costs one operation rather than a session that
+has to be detected and rebuilt.
+
+What you get instead is what a person actually wants from a box they
+cannot reach: run something, see what it printed, in colour.
+
+The command line is split into arguments the way a shell would split it
+(quotes and backslash escapes honoured), but it is **not** handed to a
+shell: no expansion, no globbing, no pipes, no redirection. The process
+is run directly, which is why a command cannot be tricked into running
+something else.
+
+`lj/selftest.py` asserts the boundary that is left: it fails if a
+`/raw`, `/stream` or `/ws` endpoint appears, or if a PTY is opened
+anywhere in the agent.
 
 ## Limitations
 
@@ -314,8 +390,13 @@ out from the server. Real SSH, real encryption, nothing to maintain here.
 - one shared token, so anything holding it can both send and receive
 - no delivery guarantee: a message queued while nobody is polling waits
   until someone reads it
-- no shell, no file access, no editor
-- the port on the listening machine must be reachable by the dialer
+- the terminal is not interactive: no prompt, no pipes, no redirection, no
+  Ctrl-C, and a command that waits for input will sit until the timeout
+- a file is edited as text; binary files can be listed, copied and
+  deleted, but not opened in the editor
+- "upload" and "download" are copy and read -- the files are on the far
+  side, so the browser's own disk is not a source or a destination
+- the port on the listening machine must be reachable by the far side
 
 ## License
 

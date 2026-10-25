@@ -186,7 +186,37 @@ can attach to the parent's -- the opposite of the question. Measured:
 
 ## Scope
 
-`lj` carries messages. It is not a transport for byte streams, and there
-is no PTY, shell or file access. `lj/selftest.py` asserts this and will
-fail if a `--raw` / `--pty` / `--shell` flag or a `/raw` / `/ws` endpoint
-appears. Do not widen it without changing that decision on purpose.
+`lj` is a file manager and a command runner for a machine you cannot
+reach, with a message queue on the side.
+
+What it is not: there is no PTY, no byte stream, no interactive session,
+no window size, no signal channel and no job control. A command runs to
+completion and its output comes back whole.
+
+The reason is the shape, not the feature list. Every operation is a
+request that comes back whole, so a timeout costs one operation rather
+than a session that has to be detected and rebuilt. A real interactive
+terminal needs a PTY, a resize channel, a signal channel and flow
+control, and a browser that emulates one properly is xterm.js -- a large
+dependency to carry for a tool whose point is being small.
+
+The command line is split into arguments the way a shell would split it,
+but it is not handed to a shell: no expansion, no globbing, no pipes, no
+redirection. The process is run directly.
+
+`lj/selftest.py` asserts the boundary that is left: it fails if a
+`/raw` / `/stream` / `/ws` endpoint appears, or if a PTY is opened
+anywhere in the agent. Do not widen it without changing that decision on
+purpose.
+
+## The token is a shell credential
+
+Since 3.0.0 the token lets the holder read, write and delete files on
+the far side and run commands there. It is a password for that machine,
+not a messaging credential.
+
+So: the token must travel over HTTPS or a network you control; the far
+side's operations are confined to `--root`; and the account the far side
+runs as is an account you would be willing to lose. Say so in the README
+whenever the token's meaning changes -- it changed once already, and the
+documentation is where a reader finds out.

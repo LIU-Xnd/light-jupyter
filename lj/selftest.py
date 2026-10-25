@@ -286,6 +286,7 @@ with open(tmp / "t2") as fh:
 status, html = get(PORT, "/")
 check("GET / -> 200", status == 200, str(status))
 check("page polls /msg", "fetch('msg'" in html, html[:160])
+check("the page polls the results", "fetch('res" in html, html[:160])
 check("page is self-contained", "script" in html and "src=" not in html)
 
 status, body = post(PORT, "/in", "hello from the far side", TOK)
@@ -381,14 +382,19 @@ check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:12
 
 # ------------------------------------------------------------- two-way
 
-print("\n=== 6. scope: messages only ===")
-# A guard, not a feature: the endpoints below must stay message-shaped. If
-# someone adds a raw/stream mode for tunnels, this is where it should fail.
+print("\n=== 6. the file and terminal channel ===")
+# The scope changed on purpose: the far side is now a file manager and
+# a command runner, not just a message queue. What the guards below
+# still protect is the SHAPE: every operation is a request that comes
+# back whole. There is no byte stream, no PTY, and no open connection
+# that carries partial output -- because those are the parts that turn
+# a timeout into a hang.
 _page = get(PORT, "/")[1]
 _dialer_src = (HERE / "dialer.py").read_text(encoding="utf-8")
 _listen_src = (HERE / "listen.py").read_text(encoding="utf-8")
+_agent_src = (HERE / "agent.py").read_text(encoding="utf-8")
 
-for _path in ("/raw", "/stream", "/ws", "/tcp", "/shell", "/exec"):
+for _path in ("/raw", "/stream", "/ws", "/tcp"):
     try:
         get(PORT, _path)
         check(f"{_path} is not served", False, "it responded")
@@ -397,22 +403,131 @@ for _path in ("/raw", "/stream", "/ws", "/tcp", "/shell", "/exec"):
     except Exception as _e:
         check(f"{_path} is not served", False, type(_e).__name__)
 
-check("the page offers no terminal", "<textarea" not in _page
-      and "xterm" not in _page)
-# --interactive is a REPL for messages, not a terminal: the guard is that
-# lj offers no byte-stream or remote-shell transport. Listing "interactive"
-# here would forbid the very feature it was meant to protect.
-check("the dialer has no stream/pty option",
-      not any(f"--{o}" in _dialer_src
-              for o in ("raw", "stream", "pty", "shell", "tty", "exec")))
-check("the REPL is messages, not a terminal",
-      "--interactive" in _dialer_src
-      and not any(w in _dialer_src
-                  for w in ("pty.spawn", "os.openpty", "termios")))
-check("the listener has no stream/pty option",
-      not any(f'"{o}"' in _listen_src
-              for o in ("/raw", "/stream", "/ws", "/shell", "/exec")))
-check("the scope note explains why", "SCOPE -- messages only" in _listen_src)
+check("the page has a file pane", 'id="tree"' in _page)
+check("the page has a terminal pane", 'id="out"' in _page)
+check("the page parses ANSI colour", "renderAnsi" in _page)
+check("the page splits a command line like a shell does",
+      "splitArgs" in _page)
+# There is still no PTY and no byte stream: a command runs to
+# completion and its output comes back whole.
+check("there is no PTY", not any(w in _agent_src
+                                for w in ("pty.spawn", "os.openpty", "termios")))
+check("the exec is a subprocess, not a shell",
+      "subprocess.run" in _agent_src and "shell=True" not in _agent_src)
+check("the scope note says what this is now",
+      "SCOPE" in _listen_src and "shell credential" in _listen_src.lower())
+
+print("\n=== 6b. the far side's operations ===")
+# The agent is exercised directly: it is the far side's half, and the
+# HTTP round trip is already covered by the tests above.
+import lj.agent as _A
+
+_root = tmp / "remote_root"
+_root.mkdir(parents=True, exist_ok=True)
+(_root / "hello.txt").write_text("hello from the far side\n", encoding="utf-8")
+(_root / "sub").mkdir(exist_ok=True)
+(_root / "sub" / "deep.txt").write_text("deep\n", encoding="utf-8")
+
+_r = _A.run_op("ls", {"path": "."}, str(_root))
+check("ls works", _r.get("ok"), str(_r))
+_names = [e["name"] for e in _r.get("entries", [])]
+check("ls lists the files", "hello.txt" in _names and "sub" in _names, str(_names))
+_kinds = {e["name"]: e["kind"] for e in _r.get("entries", [])}
+check("ls knows what is a directory", _kinds.get("sub") == "d", str(_kinds))
+
+_r = _A.run_op("read", {"path": "hello.txt"}, str(_root))
+check("read works", _r.get("ok"), str(_r))
+check("read gets the text back",
+      _r.get("text", "").rstrip("\r\n") == "hello from the far side",
+      repr(_r.get("text")))
+check("read says it is not binary", _r.get("binary") is False)
+
+_r = _A.run_op("write", {"path": "new.txt", "text": "written\n"}, str(_root))
+check("write works", _r.get("ok"), str(_r))
+check("write put the file there",
+      (_root / "new.txt").read_text(encoding="utf-8") == "written\n")
+
+_r = _A.run_op("copy", {"path": "hello.txt", "to": "sub/copy.txt"}, str(_root))
+check("copy works", _r.get("ok"), str(_r))
+check("copy put the file there", (_root / "sub" / "copy.txt").exists())
+
+_r = _A.run_op("move", {"path": "sub/copy.txt", "to": "sub/moved.txt"}, str(_root))
+check("move works", _r.get("ok"), str(_r))
+check("move left the old name", not (_root / "sub" / "copy.txt").exists())
+check("move made the new one", (_root / "sub" / "moved.txt").exists())
+
+_r = _A.run_op("delete", {"path": "new.txt"}, str(_root))
+check("delete works", _r.get("ok"), str(_r))
+check("delete removed the file", not (_root / "new.txt").exists())
+
+_r = _A.run_op("delete", {"path": "sub"}, str(_root))
+check("delete refuses a directory without the recursive flag",
+      not _r.get("ok"), str(_r))
+check("the directory is still there", (_root / "sub").exists())
+_r = _A.run_op("delete", {"path": "sub", "recursive": True}, str(_root))
+check("the recursive delete works", _r.get("ok"), str(_r))
+check("the directory is gone", not (_root / "sub").exists())
+
+# the jail
+_r = _A.run_op("ls", {"path": "/etc"}, str(_root))
+check("an absolute path outside the root is refused", not _r.get("ok"), str(_r))
+_r = _A.run_op("ls", {"path": "../../etc"}, str(_root))
+check("a relative path out of the root is refused", not _r.get("ok"), str(_r))
+_r = _A.run_op("delete", {"path": "."}, str(_root))
+check("the root itself cannot be deleted", not _r.get("ok"), str(_r))
+
+# the shell
+_r = _A.run_op("exec", {"argv": ["echo", "hello"]}, str(_root))
+check("exec works", _r.get("ok"), str(_r))
+if _r.get("ok"):
+    import base64 as _b64
+    _out = _b64.b64decode(_r.get("output", "")).decode("utf-8", "replace")
+    check("exec returns the output", _out.strip() == "hello", repr(_out))
+    check("exec returns the exit code", _r.get("code") == 0, str(_r.get("code")))
+
+_r = _A.run_op("exec", {"argv": ["definitely-not-a-command-xyz"]}, str(_root))
+check("a missing command is reported", not _r.get("ok"), str(_r))
+
+_r = _A.run_op("exec", {"argv": []}, str(_root))
+check("an empty command is refused", not _r.get("ok"), str(_r))
+
+_r = _A.run_op("exec", {"argv": "echo hello"}, str(_root))
+check("a command as a string is refused", not _r.get("ok"), str(_r))
+
+# the colour has to survive the trip
+_esc = chr(27)
+_r = _A.run_op("exec",
+              {"argv": [sys.executable, "-c",
+                        "import sys;sys.stdout.write(chr(27)+'[31mRED')"]},
+              str(_root))
+if _r.get("ok"):
+    import base64 as _b64
+    _out = _b64.b64decode(_r.get("output", "")).decode("utf-8", "replace")
+    check("the ANSI escape survives", _esc + "[31m" in _out, repr(_out))
+else:
+    check("the ANSI escape survives", False, str(_r))
+
+# the unknown operation
+_r = _A.run_op("nonsense", {}, str(_root))
+check("an unknown operation is refused", not _r.get("ok"), str(_r))
+
+# and the wire
+import lj.wire as _Wi
+_w = _Wi.Wire()
+_s = _w.put_command("ls", {"path": "."})
+check("the wire numbers the commands", isinstance(_s, int), str(type(_s)))
+_cmds = _w.take_commands()
+check("the wire hands the command over", len(_cmds) == 1, str(_cmds))
+check("the command kept its number", _cmds[0]["seq"] == _s, str(_cmds))
+check("the wire does not hand it over twice", _w.take_commands() == [])
+_w.put_result({"seq": _s, "ok": True, "value": 42})
+_res = _w.take_results(after=0)
+check("the result comes back", len(_res) == 1 and _res[0]["value"] == 42, str(_res))
+check("a result already collected is not repeated", _w.take_results(after=0) == [])
+_w.put_result({"seq": _s + 1, "ok": True})
+_res = _w.take_results(after=_s)
+check("only the newer result comes back", len(_res) == 1 and _res[0]["seq"] == _s + 1,
+      str(_res))
 
 print("\n=== 6. two-way (v2.1.0) ===")
 PORT3 = free_port()
@@ -1039,7 +1154,8 @@ status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)
 check("page stores it in a cookie", "document.cookie" in html)
 check("page sends the X-LJ-Token header", "X-LJ-Token" in html)
-check("page has a way to send back", 'id="form"' in html and "method: 'POST'" in html)
+check("page has a way to send back", 'id="chatForm"' in html
+      and "method: 'POST'" in html)
 check("page clears the fragment from the URL",
       "replaceState" in html, "token would stay in the address bar")
 

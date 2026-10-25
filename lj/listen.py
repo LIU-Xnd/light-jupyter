@@ -12,22 +12,33 @@ It prints a one-liner to hand to the sender:
 
     python -m lj.dialer --target <ip>:<port> --token <token>
 
-SCOPE -- messages only, deliberately
---------------------------------------
-This is a message queue with a web page on it. It is NOT a transport for
-arbitrary byte streams, and it must not grow into one.
+SCOPE -- a file manager and a command runner
+---------------------------------------------
+The far side can be asked to list a directory, read a file, write one,
+move it, copy it, delete it, and to run a command and return its output.
 
-Carrying a shell over it would mean re-implementing what ssh already does
-correctly: PTY allocation, windowing and flow control, reconnection
-semantics, and end-to-end encryption. Worse, forwarding raw bytes hands the
-holder of the token a remote command channel, so the token stops being a
-message-passing credential and becomes a shell credential. That is a much
-larger blast radius than the one it replaces.
+WHAT THIS IS NOT
+----------------
+There is no PTY and no byte stream. A command runs to completion and
+its output comes back whole. That is deliberate: a real interactive
+terminal needs a PTY, a resize channel, a signal channel and flow
+control -- and a browser that emulates one properly is xterm.js, which
+is a large dependency to carry for a tool whose point is being small.
+Every operation here is a request that comes back whole, so a timeout
+costs one operation rather than a session that has to be detected and
+rebuilt.
 
-Where a shell on a server with no inbound ports is needed, use ssh's own
-mechanism: an sshd on a reachable port here, another sshd on the server
-bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled out from
-the server. Real SSH, real encryption, and nothing to maintain here.
+THE TOKEN IS NOW A SHELL CREDENTIAL
+-----------------------------------
+This is the part that matters most. Before, holding the token let you
+pass messages. Now it lets you read, write and delete files on the far
+side and run commands there. The token is still 256 bits of CSPRNG
+compared in constant time, and it is still the only thing standing
+between a stranger and that machine -- but it is a PASSWORD for the far
+side now, not a messaging credential.
+
+So use HTTPS, or a network you control. And keep the far side's
+account to what you would be willing to lose.
 """
 
 import argparse
@@ -43,8 +54,17 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .page import PAGE
+from .wire import WIRE as W
+from .wire import decode as _decode
+
 DEFAULT_PORT = 10000
 TOKEN_FILE = os.path.expanduser("~/.lj/token")
+
+# The largest request body the listener will read. A command that
+# writes a file needs room for its text; anything bigger than this is
+# not something the browser sends.
+MAX_BODY = 8 * 1024 * 1024
 
 # Crockford-style alphabet: no I, L, O or U, so a token read aloud or copied
 # off a screen cannot be mistyped into a different valid token.
@@ -122,103 +142,6 @@ def verify(token: str, presented: str) -> bool:
 
 # ------------------------------------------------------------------- page
 
-PAGE = r"""<!doctype html>
-<meta charset="utf-8">
-<title>light_jupyter</title>
-<style>
-  body { font: 14px/1.6 ui-monospace, Menlo, Consolas, monospace;
-         margin: 2rem; color: #222; }
-  h1 { font-size: 1.1rem; font-weight: 600; }
-  #log { border: 1px solid #d0d0d0; border-radius: 4px; padding: 1rem;
-         min-height: 60vh; max-height: 70vh; overflow: auto;
-         white-space: pre-wrap; background: #fafafa; }
-  #bar { color: #666; font-size: 12px; margin: .6rem 0; }
-</style>
-<h1>light_jupyter</h1>
-<div id="bar">connecting&hellip;</div>
-<div id="log"></div>
-<form id="form" style="margin-top:1rem">
-  <input id="text" placeholder="type here, enter to send"
-         style="font:inherit;padding:.4rem;width:22rem;border:1px solid #ccc;border-radius:4px">
-  <button type="submit" style="font:inherit;padding:.4rem 1rem">send</button>
-</form>
-<script>
-const logEl = document.getElementById('log');
-const bar   = document.getElementById('bar');
-const form  = document.getElementById('form');
-const input = document.getElementById('text');
-let token = '';
-let seen  = 0;
-
-// The token rides in the fragment, which browsers never put on the wire.
-// Move it into a cookie so the <form> navigation can carry it too.
-function grabToken() {
-  const h = location.hash || '';
-  const m = /(?:^#|[?&])token=([^&]+)/.exec(h);
-  if (m) {
-    token = decodeURIComponent(m[1]);
-    document.cookie = 'lj_token=' + token + '; path=/; SameSite=Strict';
-    history.replaceState(null, '', location.pathname);   // keep it out of history
-    return true;
-  }
-  const c = /(?:^|;)\s*lj_token=([^;]+)/.exec(document.cookie);
-  if (c) { token = decodeURIComponent(c[1]); return true; }
-  return false;
-}
-
-function setState(text, bad) {
-  bar.textContent = text;
-  bar.style.color = bad ? '#b00' : '#666';
-}
-
-function render(msgs) {
-  for (const m of msgs) {
-    const line = document.createElement('div');
-    line.textContent = m;
-    logEl.appendChild(line);
-  }
-  if (msgs.length) {
-    logEl.scrollTop = logEl.scrollHeight;
-    seen += msgs.length;
-    setState(seen + ' message' + (seen === 1 ? '' : 's'), false);
-  }
-}
-
-async function tick() {
-  if (!token) { setState('no token -- use http://127.0.0.1:PORT/#token=...', true); return; }
-  try {
-    const r = await fetch('msg', {cache: 'no-store',
-                                  headers: {'X-LJ-Token': token}});
-    if (r.status === 401) { setState('token rejected', true); return; }
-    render((await r.json()).msgs);
-  } catch (e) {
-    setState('waiting for the listener (' + e.message + ')', true);
-  }
-  setTimeout(tick, 500);
-}
-
-form.addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const text = input.value;
-  if (!text.trim()) return;
-  input.value = '';
-  try {
-    const r = await fetch('msg', {method: 'POST',
-                                  headers: {'X-LJ-Token': token,
-                                            'Content-Type': 'text/plain'}});
-    if (r.status === 401) { setState('token rejected', true); return; }
-    setState('sent', false);
-  } catch (e) {
-    setState('send failed: ' + e.message, true);
-  }
-});
-
-if (grabToken()) tick();
-else setState('no token -- use http://127.0.0.1:PORT/#token=...', true);
-</script>
-"""
-
-
 # --------------------------------------------------------------- handler
 
 class Handler(BaseHTTPRequestHandler):
@@ -227,6 +150,21 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
 
     token = ""                      # set by main()
+
+    def _read_body(self) -> bytes:
+        """The request body, read exactly once.
+
+        The length is capped: an unbounded read is a way to make the
+        listener allocate whatever the sender says it is sending.
+        """
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            n = 0
+        if n <= 0:
+            return b""
+        n = min(n, MAX_BODY)
+        return self.rfile.read(n)
 
     def _send(self, body: bytes, ctype: str, status: int = 200) -> None:
         self.send_response(status)
@@ -250,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
         if path == "/":
             self._send(PAGE.encode("utf-8"), "text/html; charset=utf-8")
             return
@@ -269,6 +208,30 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps({"msgs": _drain(OUTBOUND)}).encode("utf-8"),
                        "application/json")
             return
+        if path == "/cmd":
+            # the far side collecting the work the browser asked for
+            if not self._token_ok():
+                self._send(b'{"error":"bad token"}', "application/json", 401)
+                return
+            self._send(json.dumps({"cmds": W.take_commands()}).encode("utf-8"),
+                       "application/json")
+            return
+        if path == "/res":
+            # the browser collecting what the far side answered
+            if not self._token_ok():
+                self._send(b'{"error":"bad token"}', "application/json", 401)
+                return
+            after = 0
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "after":
+                    try:
+                        after = int(v)
+                    except ValueError:
+                        after = 0
+            self._send(json.dumps({"results": W.take_results(after)}).encode("utf-8"),
+                       "application/json")
+            return
         self._send(b"not found", "text/plain", 404)
 
     def do_POST(self) -> None:
@@ -279,6 +242,30 @@ class Handler(BaseHTTPRequestHandler):
             target, source = OUTBOUND, "page"
         elif path == "/in":
             target, source = INBOUND, "far "
+        elif path == "/cmd":
+            # the browser asking for something to be done
+            if not self._token_ok():
+                self._send(b'{"error":"bad token"}', "application/json", 401)
+                return
+            raw = self._read_body()
+            req = _decode(raw)
+            op = req.get("op", "")
+            args = req.get("args") or {}
+            seq = W.put_command(op, args)
+            self._send(json.dumps({"seq": seq}).encode("utf-8"),
+                       "application/json")
+            return
+        elif path == "/res":
+            # the far side answering
+            if not self._token_ok():
+                self._send(b'{"error":"bad token"}', "application/json", 401)
+                return
+            raw = self._read_body()
+            result = _decode(raw)
+            if result:
+                W.put_result(result)
+            self._send(b"", "text/plain", 204)
+            return
         else:
             self._send(b"not found", "text/plain", 404)
             return
@@ -498,9 +485,15 @@ def _serves_our_page(host: str, port: int, timeout: float = 3.0,
         with urllib.request.urlopen(url, timeout=timeout, context=ctx) as r:
             body = r.read().decode("utf-8", "replace")
     except (urllib.error.URLError, OSError):
+        # Nothing answered. That is not the same as something else
+        # answering: a socket in TIME_WAIT from a previous run refuses
+        # new connections for a moment, and the server may not have
+        # finished starting yet. Either way, this is not proof that
+        # another process holds the port, so it must not be reported as
+        # one.
         return False
     # our page has a marker another server would not
-    return "lj.listen" in body or "<div id=\"log\">" in body
+    return "lj.listen" in body or "lj remote" in body or 'id="tree"' in body
 
 
 def main(argv=None) -> int:
@@ -561,7 +554,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 2.8.7)",
+        "  lj.listen  (light_jupyter 3.0.0)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",

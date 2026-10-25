@@ -4,6 +4,7 @@ One side holds the port, the other dials out to it. No inbound port is needed
 on the machine that cannot be reached.
 
     lj listen                      # holds :10000, mints a token
+    lj remote --target IP:PORT --token TOKEN   # the far side's worker
     lj dialer --target IP:PORT --token TOKEN -m 'hello'
 
 Both subcommands are also runnable as modules, which is useful from a clone
@@ -38,7 +39,7 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "2.8.7"       # fallback when not installed as a distribution
+    __version__ = "3.0.0"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 
@@ -49,6 +50,7 @@ usage: lj <command> [options]
 
 commands:
   listen     hold the port the far side dials; serves the page
+  remote     the far side's worker: files and commands, on the far machine
   dialer     push a message out to that port, or collect what the page sends
   gui        the listener in a window, with buttons
 
@@ -57,10 +59,12 @@ run 'lj <command> --help' for a command's own options.
 A session is two processes, one on each machine:
 
   machine with the browser          machine that cannot be reached
-    lj listen                        lj dialer --target <that-ip>:<port> \\
-                                       --token <token> -m 'hello'
+    lj listen                        lj remote --target <that-ip>:<port> \\
+                                       --token <token>
+    (open the URL it prints)         (the browser can now browse its files
+                                     and run commands there)
 
-Both are standard library only and need no dependencies.
+All standard library only, no dependencies.
 """
 
 
@@ -140,6 +144,8 @@ def main(argv=None) -> int:
         from .listen import main as run
     elif command == "dialer":
         from .dialer import main as run
+    elif command == "remote":
+        from .remote import main as run
     elif command == "gui":
         from .gui import main as run
     else:
