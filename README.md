@@ -19,6 +19,7 @@ repo/
     page.py                      the browser UI
     dialer.py                 lj dialer      messages only
     selftest.py               python -m lj.selftest
+    gui.py                    lj gui         the window
 
 machine A  (no inbound port)            machine B  (holds the port)
   lj remote  --POST /res-------------->  lj listen  :10000
@@ -321,17 +322,21 @@ is the price of not having a signing certificate.
 
 ### As a Linux binary
 
-The dialer can also be frozen into one file, so it runs on a machine
+The far side can also be frozen into one file, so it runs on a machine
 with nothing installed -- no Python, no conda, no pip:
 
 ```bash
-python tools/build_linux_binary.py   # -> dist/linux/lj-dialer
+python tools/build_linux_binary.py   # -> dist/linux/lj
 ```
 
 ```bash
-./lj-dialer --target <ip>:<port> --token <token> -m 'hello'
-./lj-dialer --target <ip>:<port> --token <token>    # interactive
+./lj remote --target <ip>:<port> --token <token> --root ~/project
+./lj dialer --target <ip>:<port> --token <token> -m 'hello'
 ```
+
+The worker is the half that matters: it is the one that runs on the box
+that cannot be reached, and it is the one that has to carry its own
+interpreter. The message dialer is in the same binary.
 
 It has to be built on Linux, and on the machine it will run on or an
 older one: the binary links against the glibc of the system that built
