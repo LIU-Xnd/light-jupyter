@@ -204,7 +204,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-109 checks: token properties, target parsing, the HTTP surface, that a wrong
+116 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
 handles its failure modes, that https really rejects an untrusted
@@ -242,6 +242,22 @@ python -m pip install -e "git+https://github.com/LIU-Xnd/light-jupyter.git#subdi
 
 If `github.com:443` is blocked on your network, `git clone
 git@github.com:LIU-Xnd/light-jupyter.git` works the same.
+
+### As an MSI
+
+There is also an installer, with the window and a Start Menu shortcut:
+
+```bash
+pyappdist build            # -> appdist/windows/dist/lj-<version>.msi
+```
+
+It bundles a Python runtime, so it installs on a machine with nothing on
+it -- no Python, no pip, no conda. The build needs
+[WiX](https://wixtoolset.org) (v6 or later) and `pyappdist`; point
+`PYAPPDIST_WIN_WIX` at `wix.exe` if it is not on PATH.
+
+The MSI is unsigned, so Windows will warn about an unknown publisher. That
+is the price of not having a signing certificate.
 
 ## Security
 

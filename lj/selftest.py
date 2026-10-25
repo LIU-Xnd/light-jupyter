@@ -901,6 +901,35 @@ if _have_display:
 else:
     print("  skip  the GUI tests         (no display)")
 
+print("\n=== 6i. every subcommand takes the dispatcher's calling convention ===")
+# The dispatcher calls run(rest) for every command. A main() that does
+# not accept an argument therefore works from a checkout (where it is
+# called directly) and fails from an installed copy (where it is called
+# through the dispatcher) with a TypeError.
+import inspect
+for _name in ("listen", "dialer", "gui"):
+    _mod = load(f"lj.{_name}")
+    _fn = getattr(_mod, "main", None)
+    check(f"lj.{_name} has a main()", _fn is not None)
+    if _fn is None:
+        continue
+    _sig = inspect.signature(_fn)
+    _takes = (_sig.parameters
+              and any(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+                      for p in _sig.parameters.values()))
+    _has_default = bool(_sig.parameters
+                         and all(p.default is not p.empty
+                                 for p in _sig.parameters.values()))
+    check(f"lj.{_name}.main() accepts the argument list",
+          _takes or _has_default, str(_sig))
+
+# and the dispatcher actually calls it that way
+_r = subprocess.run([PY, "-m", "lj", "gui", "--nonsense"], capture_output=True,
+                    text=True, timeout=60, errors="replace")
+check("lj gui with a bad option fails cleanly, not with a TypeError",
+      "TypeError" not in (_r.stdout or "") + (_r.stderr or ""),
+      ((_r.stdout or "") + (_r.stderr or ""))[-120:])
+
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)

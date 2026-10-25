@@ -413,7 +413,17 @@ class App(tk.Tk):
         self.destroy()
 
 
-def main():
+def main(argv=None) -> int:
+    """Run the window.
+
+    The dispatcher calls every subcommand's main() with the remaining
+    arguments, so this has to accept them even though the window has no
+    options -- a signature of main() with no parameters makes `lj gui`
+    fail with a TypeError the moment it is run from an installed copy.
+    """
+    if argv:
+        print("lj gui takes no options", file=sys.stderr)
+        return 2
     App().mainloop()
     return 0
 
