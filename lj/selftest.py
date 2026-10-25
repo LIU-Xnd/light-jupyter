@@ -778,6 +778,40 @@ if _up and _tls.poll() is None:
     except Exception:
         check("plain http against a TLS port fails", True)
 
+print("\n=== 6g. the README matches the code ===")
+# A flag that exists but is not documented is a flag nobody uses; one
+# that is documented but does not exist is worse -- the command fails.
+_readme = (HERE.parent / "README.md")
+if _readme.is_file():
+    _md = _readme.read_text(encoding="utf-8")
+
+    def _flags(sub):
+        _h = subprocess.run([PY, "-m", "lj", sub, "-h"],
+                            capture_output=True, text=True, timeout=60,
+                            errors="replace").stdout
+        return set(re.findall(r"--[a-z][a-z-]*", _h)) - {"--help"}
+
+    _all = _flags("listen") | _flags("dialer")
+    _documented = set(re.findall(r"`(--[a-z][a-z-]*)", _md))
+    # a flag may also be written "-m, --message" -- that still has the
+    # long form in backticks
+    _documented |= set(re.findall(r"--[a-z][a-z-]*", "\n".join(
+        _l for _l in _md.splitlines() if _l.startswith("|"))))
+
+    _undocumented = sorted(_all - _documented)
+    check("every flag is in the README", not _undocumented,
+          "undocumented: " + ", ".join(_undocumented))
+
+    # the README must not describe a retired version
+    _retired = [w for w in ("v1.x was", "v1 has been", "previously it did",
+                            "the old way") if w in _md]
+    check("the README does not describe retired versions", not _retired,
+          ", ".join(_retired))
+
+else:
+    check("the README is present", False, "README.md not found")
+
+
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)
@@ -796,6 +830,25 @@ except urllib.error.HTTPError as e:
     check("a page with no token at all is refused", e.code == 401, str(e.code))
 
 _reap_all()
+
+# The README quotes the number of checks, so it has to be checked here
+# and not earlier: the total is only known once every check has run.
+_readme = HERE.parent / "README.md"
+if _readme.is_file():
+    _md = _readme.read_text(encoding="utf-8")
+    _m = re.search(r"(\d+) checks", _md)
+    if _m:
+        _claimed = int(_m.group(1))
+        _actual = len(PASS) + len(FAIL) + 1     # + this check
+        if _claimed != _actual:
+            FAIL.append("the README states the real number of checks "
+                        f"(README says {_claimed}, the suite has {_actual})")
+            print(f"  FAIL  the README states the real number of checks   "
+                  f"README says {_claimed}, suite has {_actual}")
+        else:
+            PASS.append("the README states the real number of checks")
+            print(f"  ok    the README states the real number of checks   "
+                  f"({_claimed})")
 
 print("\n" + "=" * 60)
 print(f"{len(PASS)} passed, {len(FAIL)} failed")

@@ -33,19 +33,23 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 2.2)
+  lj listen  (light_jupyter 2.7.1)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
-    token     : lj_FE3FQK8Z...           (generated into ~/.lj/token)
+    token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
 
-  browser : http://127.0.0.1:10000/
+  browser : http://127.0.0.1:10000/#token=lj_FE3FQK8Z...
 
   hand this to the sending side:
 
-    lj dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
+    lj dialer --target http://192.168.77.160:10000 --token lj_FE3FQK8Z...
+
+  ctrl-c to stop
 ```
 
-Open `http://127.0.0.1:10000/` - the page polls and renders whatever arrives.
+Copy the `browser :` line as it stands - the token is in the fragment, so
+the page authenticates itself. The fragment is never sent to the server,
+so the token cannot leak into a log or a `Referer` header.
 
 **On the machine that cannot be reached** - it dials out:
 
@@ -61,6 +65,18 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
   [13:50:57] 3/3 -> 204 in 0.00s
 ```
 
+**With no `-m` and a terminal**, the dialer becomes a two-way REPL: type
+to send, and what the page types appears as it arrives.
+
+```
+you > hello
+  [16:19:55] --> hello
+  [16:19:56] <-- message from the page
+```
+
+`/help`, `/send TEXT`, `/quit` and ctrl-d. Piped input stays a one-shot
+send, so scripts never hang in a prompt.
+
 ## Versions
 
 | | |
@@ -74,12 +90,6 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
 | **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
 | **v2.6.0** | the version number, the tag and the installed metadata agree. |
 | **v2.7.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
-
-v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
-frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured
-end to end, it was the only thing standing between the two machines, and
-plain HTTP is easier to debug, proxy and extend. v1 has been removed; the
-tags up to v1.2.0 still hold it if you need it.
 
 ## Encryption
 
@@ -134,19 +144,27 @@ All four data endpoints require the token (`X-LJ-Token` header, or the
 | `--token-file PATH` | where the token lives (default `~/.lj/token`) |
 | `--regen-token` | mint a new token, discarding the old one |
 | `--print-only` | print the banner and exit |
+| `--cert PEM` | serve https with this certificate |
+| `--key PEM` | the private key for `--cert` (default: `key.pem` beside it) |
+| `--gen-cert [DIR]` | generate a self-signed certificate and key (default `~/.lj`) and exit |
 
 ### `lj dialer`
 
 | flag | |
 |---|---|
-| `--target IP[:PORT]` | required; defaults to port `10000` |
+| `--target [https://]IP[:PORT]` | required; defaults to port `10000` |
 | `--token TOKEN` | required |
 | `-m, --message TEXT` | what to send (default: stdin) |
 | `-f, --file PATH` | send a file |
 | `--repeat N`, `--interval SEC` | send repeatedly |
+| `--timeout SEC` | per-request timeout (default `10`) |
 | `--show` | read what the browser queued after sending |
 | `--listen` | receive what the browser sends instead of sending |
 | `--once` | with `--listen`, poll once and exit |
+| `-i, --interactive` | two-way REPL (the default when stdin is a terminal and no message was given) |
+| `--poll SEC` | how often the REPL checks for new messages |
+| `--ca PEM` | trust this certificate (for an https target) |
+| `--insecure` | accept any certificate -- not protected against anyone watching |
 
 ## The token
 
@@ -165,15 +183,19 @@ working immediately.
 ## Test
 
 ```bash
-python lj/selftest.py
+python -m lj.selftest
 ```
 
-58 checks: token properties, target parsing, the HTTP surface, that a wrong
+99 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
-handles its failure modes, and that no byte-stream/terminal surface has crept
-in (see Scope). The `0600` assertion only runs where POSIX
-permission bits mean something (not on Windows/NTFS).
+handles its failure modes, that https really rejects an untrusted
+certificate, and that no byte-stream/terminal surface has crept in (see
+Scope). The `0600` assertion only runs where POSIX permission bits mean
+something (not on Windows/NTFS).
+
+The suite leaves nothing running: a normal exit reaps every child, and a
+run that is killed leaves its pids in a file that the next run cleans up.
 
 ## Install
 
@@ -186,7 +208,7 @@ cd light-jupyter
 lj listen
 ```
 
-or install it, which puts `lj.listen` / `lj.dialer` on PATH everywhere:
+or install it, which puts `lj` on PATH everywhere:
 
 ```bash
 python -m pip install -e .          # editable: git pull updates the install
@@ -237,7 +259,6 @@ out from the server. Real SSH, real encryption, nothing to maintain here.
 - no delivery guarantee: a message queued while nobody is polling waits
   until someone reads it
 - no shell, no file access, no editor
-- no shell, no file access, no editor yet
 - the port on the listening machine must be reachable by the dialer
 
 ## License
