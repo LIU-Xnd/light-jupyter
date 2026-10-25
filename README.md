@@ -262,6 +262,25 @@ progress bar, and a page that says it is done.
 The MSI is unsigned, so Windows will warn about an unknown publisher. That
 is the price of not having a signing certificate.
 
+### As a Linux binary
+
+The dialer can also be frozen into one file, so it runs on a machine
+with nothing installed -- no Python, no conda, no pip:
+
+```bash
+python tools/build_linux_binary.py   # -> dist/linux/lj-dialer
+```
+
+```bash
+./lj-dialer --target <ip>:<port> --token <token> -m 'hello'
+./lj-dialer --target <ip>:<port> --token <token>    # interactive
+```
+
+It has to be built on Linux, and on the machine it will run on or an
+older one: the binary links against the glibc of the system that built
+it, and glibc only goes forwards. Built on Ubuntu 20.04 it needs
+GLIBC_2.14, so it runs on 20.04 and everything newer.
+
 ## Security
 
 - 256-bit token compared in constant time, stored `0600`

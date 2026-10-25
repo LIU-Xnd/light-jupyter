@@ -35,3 +35,4 @@ Thumbs.db
 
 # the WiX extension cache the installer build uses
 .wix/
+dist/linux/

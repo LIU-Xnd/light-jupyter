@@ -113,6 +113,30 @@ Things that are not obvious and cost time to rediscover:
   the mixed tabs and spaces are upstream's. It does not stop the build
   and it does not affect the installer.
 
+## The Linux binary
+
+`tools/build_linux_binary.py` freezes the dialer into one file with
+PyInstaller, so it can run on a machine with no Python, no conda and no
+pip -- which is the whole point of the dialer side.
+
+Things that are not obvious:
+
+- **It has to be built on Linux.** PyInstaller is not a cross-compiler,
+  and a binary built on Windows cannot run on Linux at all.
+- **Build it on the machine it will run on, or an older one.** The
+  binary links against the glibc of the system that built it, and glibc
+  only ever goes forwards. Built on Ubuntu 20.04 it needs GLIBC_2.14,
+  so it runs on 20.04 and everything newer; built on 24.04 it would not
+  run on 20.04.
+- **A fully static build needs musl**, which needs root: `musl-tools`
+  is not installed and `sudo` wants a password. Docker would do it but
+  the socket is `root:docker` and the user is not in that group. The
+  glibc dependency is low enough that this does not matter in practice.
+- **The window is excluded.** tkinter is Windows-only here, and
+  excluding it keeps the binary smaller.
+- The entry point is `tools/freeze_entry.py`, not `lj.dialer:main` --
+  PyInstaller wants a script.
+
 ## Scope
 
 `lj` carries messages. It is not a transport for byte streams, and there
