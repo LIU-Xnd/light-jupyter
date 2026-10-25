@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lj"
-version = "2.7.3"
+version = "2.8.0"
 description = "A minimal egress-only message channel: one side holds the port, the other dials out"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -22,4 +22,34 @@ lj = "lj:main"
 packages = ["lj"]
 
 [tool.setuptools.package-data]
-lj = ["README.md"]
+# the window icon travels with the package
+lj = ["README.md", "assets/*"]
+
+# ---- the MSI installer ------------------------------------------------
+# pyappdist reads this: it builds a self-contained runtime, installs lj
+# into it, and wraps the result in an MSI. It needs a dependency
+# manager named even though lj has no dependencies -- requirements.txt
+# with nothing in it says exactly that.
+[tool.pyappdist]
+name = "lj"
+python = "3.12"
+manager = "requirements.txt"
+
+[[tool.pyappdist.launchers]]
+name = "lj"
+entry = "lj:main"
+gui = true
+icon = { windows = "assets/lj.ico" }
+
+[[tool.pyappdist.launchers]]
+name = "lj-console"
+entry = "lj:main"
+gui = false
+
+[[tool.pyappdist.targets]]
+name = "windows"
+platform = "windows-x86_64"
+format = "msi"
+manufacturer = "zlab"
+scope = "user"
+upgrade-code = "A768FDC5-E22D-4204-B7BE-D49D5005E98F"

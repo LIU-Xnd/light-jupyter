@@ -118,6 +118,18 @@ there is no CA to ask. `ssl` is in the standard library, so this costs no
 dependency -- only `openssl` on the machine that generates the
 certificate.
 
+## A window instead of a terminal
+
+`lj gui` opens the listener as a window: a start button, the address to
+hand to the sender, a log, and a box to type into. It is a view over the
+same server -- the HTTP handling, the token and the queues are
+`lj.listen`'s, imported and driven, not reimplemented. The command line
+still works and nothing here is required to use `lj`.
+
+```bash
+lj gui
+```
+
 ## Endpoints
 
 One path per direction — an endpoint cannot mean both:
@@ -134,6 +146,11 @@ All four data endpoints require the token (`X-LJ-Token` header, or the
 `lj_token` cookie for the page).
 
 ## Commands
+
+### `lj gui`
+
+The listener in a window. No flags -- it is the same thing `lj listen`
+does, with buttons.
 
 ### `lj listen`
 
@@ -186,7 +203,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-99 checks: token properties, target parsing, the HTTP surface, that a wrong
+109 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
 handles its failure modes, that https really rejects an untrusted

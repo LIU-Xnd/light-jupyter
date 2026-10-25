@@ -1,47 +1,30 @@
-# virtualenvs
-.venv/
-.venv-*/
-venv/
-env/
-
 # python
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 
-# credentials / local state
+# virtualenvs
+.venv/
+.venv-*/
+venv/
+env/
+
+# local state and credentials
 .env
 *.token
 .light_jupyter/
+.lj/
 
-# one-off probe and diagnostic scripts (contain hardcoded credentials)
-# local deploy helpers (not the shipped lj_listen/lj_dialer)
-lj_deploy.py
-lj_test.py
-lj_launch.py
-lj_diag*.py
-lj_final_probe.py
-lj_porttest.py
-lj_reachcheck.py
-lj_readout.py
-lj_recheck.py
-lj_runfinal.py
-lj_start.py
-lj_tokencheck.py
-lj_tokentest.py
-lj_verify.py
-s41_*.py
-probe_*.py
-login_probe.py
-kex_probe.py
-fabric_probe.py
-capture_login.py
-lj_reachable_ports.txt
+# the packaged README is generated from README.md by setup.py
+# (it is committed so that an sdist carries it)
+
+# the MSI build tree: a whole Python runtime plus the image. It is
+# large, it is generated, and it has no business in the repository.
+.appdist-build/
+appdist/
+dist/
 
 # editor / OS
 .vscode/
@@ -49,15 +32,3 @@ lj_reachable_ports.txt
 .DS_Store
 Thumbs.db
 *.swp
-
-# the pre-split layout: superseded by light_jupyter_server/ and
-# light_jupyter_client/ (kept only because a shell may hold the directory).
-# Anchored to the root so it cannot match light_jupyter_server/light_jupyter/.
-/light_jupyter/
-
-# the tunnel secret, pasted in by hand on each machine
-light_jupyter_client/secret_light_jupyter
-light_jupyter_server/secret_light_jupyter
-
-# pip editable installs of a git URL land a clone in src/
-src/

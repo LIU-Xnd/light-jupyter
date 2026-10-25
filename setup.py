@@ -35,7 +35,40 @@ def sync_readme():
             fh.write(new)
 
 
+ASSETS_SRC = os.path.join(HERE, "assets")
+ASSETS_DST = os.path.join(HERE, "lj", "assets")
+
+
+def sync_assets():
+    """Copy the window icons into the package.
+
+    package-data only reaches files inside the package directory, so the
+    icons have to be in lj/assets/ to travel with an install. They are
+    generated, so they are copied at build time rather than kept as a
+    second copy in the tree.
+    """
+    if not os.path.isdir(ASSETS_SRC):
+        return
+    os.makedirs(ASSETS_DST, exist_ok=True)
+    for name in os.listdir(ASSETS_SRC):
+        if not name.endswith((".png", ".ico")):
+            continue
+        src = os.path.join(ASSETS_SRC, name)
+        dst = os.path.join(ASSETS_DST, name)
+        with open(src, "rb") as fh:
+            data = fh.read()
+        if not os.path.isfile(dst):
+            with open(dst, "wb") as fh:
+                fh.write(data)
+            continue
+        with open(dst, "rb") as fh:
+            if fh.read() != data:
+                with open(dst, "wb") as fh:
+                    fh.write(data)
+
+
 sync_readme()
+sync_assets()
 
 from setuptools import setup
 

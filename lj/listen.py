@@ -455,8 +455,8 @@ def _wrap_tls(srv, certfile: str, keyfile: str):
     return srv
 
 
-def _bind_or_explain(host: str, port: int, certfile: str = None,
-                     keyfile: str = None):
+def _bind_or_explain(host: str, port: int, certfile: "str | None" = None,
+                     keyfile: "str | None" = None):
     """Bind, or say clearly which port is taken."""
     from http.server import ThreadingHTTPServer
     try:
@@ -561,7 +561,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 2.7.3)",
+        "  lj.listen  (light_jupyter 2.8.0)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",

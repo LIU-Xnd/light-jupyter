@@ -38,7 +38,7 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "2.7.3"       # fallback when not installed as a distribution
+    __version__ = "2.8.0"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 
@@ -50,6 +50,7 @@ usage: lj <command> [options]
 commands:
   listen     hold the port the far side dials; serves the page
   dialer     push a message out to that port, or collect what the page sends
+  gui        the listener in a window, with buttons
 
 run 'lj <command> --help' for a command's own options.
 
@@ -82,6 +83,8 @@ def main(argv=None) -> int:
         from .listen import main as run
     elif command == "dialer":
         from .dialer import main as run
+    elif command == "gui":
+        from .gui import main as run
     else:
         print(f"lj: unknown command {command!r}\n", file=sys.stderr)
         print(USAGE.format(version=__version__), end="", file=sys.stderr)

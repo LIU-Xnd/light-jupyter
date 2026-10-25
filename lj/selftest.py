@@ -818,6 +818,89 @@ else:
     check("the README is present", False, "README.md not found")
 
 
+print("\n=== 6h. the GUI ===")
+# The window is a view over the same server, so the test drives the
+# WIDGETS and the real HTTP endpoints -- not a copy of the logic. A GUI
+# that shows something different from what the page shows is worse than
+# no GUI.
+try:
+    import tkinter as _tk
+    _root = _tk.Tk()
+    _root.withdraw()
+    _have_display = True
+except Exception:
+    _have_display = False
+
+if _have_display:
+    try:
+        sys.path.insert(0, str(HERE.parent))
+        import lj.gui as _G
+        _app = _G.App()
+        _app.withdraw()
+
+        check("the window has a title", _app.title() == _G.APP_TITLE,
+              _app.title())
+        check("the window has a log", hasattr(_app, "log"))
+        check("the window has the url field", hasattr(_app, "url_var"))
+
+        # start it, the way the button does
+        _gport = free_port()
+        _app.port_var.set(str(_gport))
+        _app.host_var.set("127.0.0.1")
+        _app._start()
+        _deadline = time.time() + 25
+        _up = False
+        while time.time() < _deadline:
+            _app._drain()
+            if _app.worker and _app.worker.is_alive() and _app.token:
+                _up = True
+                break
+            time.sleep(0.2)
+        check("the GUI starts a listener", _up,
+              _app.worker.error if _app.worker else "?")
+
+        if _up:
+            _gurl = _app.url_var.get()
+            check("the GUI shows the url with the token",
+                  _gurl.startswith(f"http://127.0.0.1:{_gport}/")
+                  and "#token=lj_" in _gurl, _gurl)
+
+            # the page is really served on that port
+            _s, _b = get(_gport, "/", None)
+            check("the GUI's listener serves the page", _s == 200, str(_s))
+
+            # sending through the window reaches the queue the far side
+            # reads
+            _app.msg_var.set("from the window")
+            _app._send()
+            _app._drain()
+            _got = json.loads(get(_gport, "/send", _app.token)[1])
+            check("what the window sends reaches the far side",
+                  "from the window" in _got.get("msgs", []), str(_got)[:100])
+
+            # ...and the window must not then show it as arriving. It
+            # posts to /msg and polls /send -- the same queue -- so
+            # without tracking its own sends it echoes itself.
+            _app._poll()
+            _app._drain()
+            _text = _app.log.get("1.0", "end")
+            check("the window does not show its own message as incoming",
+                  "<- from the window" not in _text, _text[-160:])
+            check("the window does show it as sent",
+                  "-> from the window" in _text, _text[-160:])
+
+            _app._stop()
+            time.sleep(1.0)
+            check("the GUI stops the listener",
+                  _app.btn.cget("text") == "Start", _app.btn.cget("text"))
+
+        _app.destroy()
+        _root.destroy()
+    except Exception as _e:
+        check("the GUI works", False, f"{type(_e).__name__}: {_e}")
+else:
+    print("  skip  the GUI tests         (no display)")
+
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)
