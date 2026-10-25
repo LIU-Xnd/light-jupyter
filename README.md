@@ -72,7 +72,8 @@ lj dialer --target ... --token ... --repeat 10 --interval 4
 | **v2.4.0** | `lj dialer` is a two-way REPL: type to send, inbound messages appear live with timestamps. |
 | **v2.4.1** | the self-test no longer leaves listeners behind; the REPL section survives Linux. |
 | **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
-| **v2.6.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
+| **v2.6.0** | the version number, the tag and the installed metadata agree. |
+| **v2.7.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
 
 v1.x was a full web IDE (terminal, file pane, editor) carried over a custom
 frame-multiplexed tunnel. v2 drops that protocol for plain HTTP - measured

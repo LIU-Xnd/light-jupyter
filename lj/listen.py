@@ -527,7 +527,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 2.6)",
+        "  lj.listen  (light_jupyter 2.7)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",
