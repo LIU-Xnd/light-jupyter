@@ -344,6 +344,12 @@ def local_addr() -> str:
         s.close()
 
 
+def _is_ipv4(s: str) -> bool:
+    parts = s.split(".")
+    return (len(parts) == 4
+            and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts))
+
+
 def generate_self_signed(directory: str, host: str = "localhost") -> tuple:
     """Make a self-signed certificate and key with openssl.
 
@@ -363,6 +369,36 @@ def generate_self_signed(directory: str, host: str = "localhost") -> tuple:
     # openssl is a C program: it takes the path as given, and a Windows
     # path with backslashes becomes "C:\dir\file" inside its own path
     # handling, which it then cannot open. Forward slashes work on both.
+    # The certificate has to be valid for the name the other side will
+    # use to reach this host. A certificate with only "localhost" in its
+    # SAN list fails hostname verification the moment the other machine
+    # dials the routable address -- and the error says "IP address
+    # mismatch", which reads like a wrong certificate rather than a
+    # missing name. So: localhost, 127.0.0.1, the machine's own IPv4,
+    # and its hostname.
+    names = ["localhost"]
+    ips = ["127.0.0.1"]
+    if host and host not in names:
+        if _is_ipv4(host):
+            ips.append(host)
+        else:
+            names.append(host)
+    _own = local_addr()
+    if _own and _own not in ips and _own not in names:
+        ips.append(_own)
+    _hn = socket.gethostname()
+    if _hn and _hn not in names:
+        names.append(_hn)
+    _fqdn = socket.getfqdn()
+    if _fqdn and _fqdn not in names:
+        names.append(_fqdn)
+
+    alt = ["[alt]"]
+    for _i, _n in enumerate(names, 1):
+        alt.append(f"DNS.{_i} = {_n}")
+    for _i, _n in enumerate(ips, 1):
+        alt.append(f"IP.{_i} = {_n}")
+
     cnf = os.path.join(directory, "openssl.cnf").replace("\\", "/")
     with open(os.path.join(directory, "openssl.cnf"), "w", encoding="utf-8") as fh:
         fh.write(
@@ -377,9 +413,7 @@ def generate_self_signed(directory: str, host: str = "localhost") -> tuple:
             "basicConstraints = critical, CA:TRUE\n"
             "keyUsage = digitalSignature, keyEncipherment, keyCertSign\n"
             "extendedKeyUsage = serverAuth\n"
-            "[alt]\n"
-            "DNS.1 = localhost\n"
-            "IP.1 = 127.0.0.1\n")
+            + "\n".join(alt) + "\n")
 
     cmd = ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
            "-keyout", key.replace("\\", "/"), "-out", cert.replace("\\", "/"),

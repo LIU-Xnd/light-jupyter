@@ -686,6 +686,26 @@ check("--gen-cert makes a certificate", (_tls_dir / "cert.pem").exists()
 check("--gen-cert says what to do with the certificate",
       "--ca" in (_r.stdout or ""), (_r.stdout or "")[-160:])
 
+# The certificate has to be valid for the name the OTHER side uses. A
+# cert with only "localhost" in its SAN list fails hostname verification
+# the moment the far machine dials the routable address, and the error
+# ("IP address mismatch") reads like a wrong certificate rather than a
+# missing name. So the certificate must carry the machine's own address.
+try:
+    import ssl as _ssl
+    _der = (_tls_dir / "cert.pem").read_bytes()
+    _pem = _ssl.DER_cert_to_PEM_cert(_der) if False else None
+    _txt = subprocess.run(["openssl", "x509", "-in", str(_tls_dir / "cert.pem"),
+                           "-noout", "-text"],
+                          capture_output=True, text=True, timeout=60).stdout
+    _own = L.local_addr()
+    check("the certificate is valid for this machine's own address",
+          _own and _own in _txt, f"{_own} not in the SAN list")
+    check("the certificate is valid for localhost", "localhost" in _txt)
+except Exception as _e:
+    check("the certificate is valid for this machine's own address",
+          False, type(_e).__name__)
+
 _tls_port = free_port()
 # stdout goes to a FILE, not a pipe: a pipe nobody drains fills up, the
 # child blocks writing to it, and the reap's wait() then blocks forever
