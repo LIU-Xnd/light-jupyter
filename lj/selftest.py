@@ -781,8 +781,14 @@ if _up and _tls.poll() is None:
 print("\n=== 6g. the README matches the code ===")
 # A flag that exists but is not documented is a flag nobody uses; one
 # that is documented but does not exist is worse -- the command fails.
-_readme = (HERE.parent / "README.md")
-if _readme.is_file():
+# The README is shipped inside the package, so an installed copy has it;
+# a checkout finds the repo-root one. Look in both places.
+_readme = None
+for _cand in (HERE / "README.md", HERE.parent / "README.md"):
+    if _cand.is_file():
+        _readme = _cand
+        break
+if _readme is not None:
     _md = _readme.read_text(encoding="utf-8")
 
     def _flags(sub):
@@ -833,14 +839,18 @@ _reap_all()
 
 # The README quotes the number of checks, so it has to be checked here
 # and not earlier: the total is only known once every check has run.
-_readme = HERE.parent / "README.md"
-if _readme.is_file():
+if _readme is not None:
     _md = _readme.read_text(encoding="utf-8")
     _m = re.search(r"(\d+) checks", _md)
     if _m:
         _claimed = int(_m.group(1))
         _actual = len(PASS) + len(FAIL) + 1     # + this check
-        if _claimed != _actual:
+        # A checkout runs more checks than an installed copy: some of
+        # them need the repository (the README at the root, the source
+        # tree itself). So the README's number is the checkout's, and an
+        # installed copy is allowed to run fewer.
+        _in_checkout = (HERE.parent / "pyproject.toml").is_file()
+        if _in_checkout and _claimed != _actual:
             FAIL.append("the README states the real number of checks "
                         f"(README says {_claimed}, the suite has {_actual})")
             print(f"  FAIL  the README states the real number of checks   "
@@ -848,7 +858,9 @@ if _readme.is_file():
         else:
             PASS.append("the README states the real number of checks")
             print(f"  ok    the README states the real number of checks   "
-                  f"({_claimed})")
+                  f"(README says {_claimed}, this run has {_actual}"
+                  + ("" if _in_checkout else ", fewer in an installed copy")
+                  + ")")
 
 print("\n" + "=" * 60)
 print(f"{len(PASS)} passed, {len(FAIL)} failed")
