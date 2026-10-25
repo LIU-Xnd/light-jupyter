@@ -83,6 +83,11 @@ Things that are not obvious and cost time to rediscover:
   is how you rebuild the MSI without re-downloading the runtime.
 - The MSI is unsigned, so Windows warns about an unknown publisher.
   `pyappdist` has a `sign:` stage for when there is a certificate.
+- The build prints
+  `Error compiling 'python\tcl\tix8.4.3\pref\WmDefault.py'...` and
+  carries on. That file belongs to the bundled Python, not to lj, and
+  the mixed tabs and spaces are upstream's. It does not stop the build
+  and it does not affect the installer.
 
 ## Scope
 
