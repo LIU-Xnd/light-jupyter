@@ -154,6 +154,36 @@ Things that are not obvious:
 - The entry point is `tools/freeze_entry.py`, not `lj.dialer:main` --
   PyInstaller wants a script.
 
+## The Windows launcher has no console
+
+The Windows launcher is built on `pythonw.exe` (PE subsystem 2), so it
+has no console. Anything printed to stdout or stderr goes nowhere,
+and the process appears to do nothing at all.
+
+Two consequences:
+
+- **With no arguments the dispatcher opens the window.** The Start Menu
+  shortcut runs the launcher with no arguments; printing the usage
+  there is invisible, so it opens the GUI instead. The console
+  launcher still prints the usage.
+- **A crash has to be shown in a message box.** A traceback to stderr
+  from a pythonw process is invisible, so the dispatcher catches it and
+  puts it in a `MessageBoxW`.
+
+How to tell whether there is a console, on Windows:
+
+```python
+buffer = (ctypes.c_ulong * 8)()
+count = kernel32.GetConsoleProcessList(buffer, len(buffer))
+has_console = count > 0
+```
+
+`AttachConsole(ATTACH_PARENT_PROCESS)` is the tempting wrong answer:
+it succeeds precisely when the process has NO console of its own and
+can attach to the parent's -- the opposite of the question. Measured:
+`python.exe` gives `GetConsoleProcessList` = 5, `pythonw.exe` gives 0;
+`AttachConsole` gives false and true respectively.
+
 ## Scope
 
 `lj` carries messages. It is not a transport for byte streams, and there

@@ -38,7 +38,7 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "2.8.5"       # fallback when not installed as a distribution
+    __version__ = "2.8.6"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 
@@ -64,12 +64,69 @@ Both are standard library only and need no dependencies.
 """
 
 
+def _has_console() -> bool:
+    """Is there a console to print to?
+
+    The Windows launcher is built on pythonw.exe, which has no console.
+    Output written there goes nowhere: the process appears to do
+    nothing at all. That matters most for the Start Menu shortcut,
+    which runs the launcher with no arguments.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # GetConsoleProcessList fills the buffer with the pids attached
+        # to this process's console and returns how many there were.
+        # Zero means there is no console -- which is the case for the
+        # Windows launcher, because it runs on pythonw.exe.
+        #
+        # AttachConsole is the wrong signal here and is tempting to
+        # reach for: it succeeds precisely when the process has NO
+        # console of its own and can attach to the parent's.
+        buffer = (ctypes.c_ulong * 8)()
+        count = kernel32.GetConsoleProcessList(buffer, len(buffer))
+        return count > 0
+    except Exception:
+        # If the check itself fails, assume there is a console: printing
+        # is the safer default on the platforms where output matters.
+        return True
+
+
+def _report_crash() -> None:
+    """Show a traceback where the user can actually see it.
+
+    With a console it goes to stderr. Without one -- the Windows
+    launcher runs on pythonw.exe -- stderr is nowhere, so a message box
+    is the only thing that will show the user what went wrong.
+    """
+    import traceback
+
+    text = "".join(traceback.format_exception(*sys.exc_info()))
+    if _has_console():
+        print(text, file=sys.stderr)
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, text, "lj -- something went wrong", 0x10)
+    except Exception:
+        pass
+
+
 def main(argv=None) -> int:
     """Dispatch `lj <command> ...` to the subcommand's own main()."""
     argv = list(sys.argv[1:] if argv is None else argv)
 
     # `lj`, `lj -h` and `lj --help` all print the top-level usage.
     if not argv or argv[0] in ("-h", "--help", "help"):
+        # With no console there is nowhere to print to, so the user
+        # would see nothing happen. Open the window instead: that is
+        # what the Start Menu shortcut runs.
+        if not argv and not _has_console():
+            from .gui import main as run
+            return run([])
         print(USAGE.format(version=__version__), end="")
         return 0
     if argv[0] in ("-V", "--version"):
@@ -90,7 +147,14 @@ def main(argv=None) -> int:
         print(USAGE.format(version=__version__), end="", file=sys.stderr)
         return 2
 
-    return run(rest)
+    try:
+        return run(rest)
+    except Exception:
+        # A failure here would otherwise be invisible: the Windows
+        # launcher is pythonw-based, so a traceback printed to stderr
+        # goes nowhere and the process just disappears. Show it.
+        _report_crash()
+        raise
 
 
 if __name__ == "__main__":

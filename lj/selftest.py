@@ -951,6 +951,49 @@ if _have_display:
 else:
     print("  skip  the GUI tests         (no display)")
 
+print("\n=== 6h2. the launcher opens the window when there is no console ===")
+# The Start Menu shortcut runs the GUI launcher with no arguments. The
+# launcher is pythonw-based, so it has no console: printing usage goes
+# nowhere and the process exits, which the user sees as "nothing
+# happened". With no console and no arguments the dispatcher must open
+# the window instead.
+import lj as _ljmod
+
+check("the dispatcher knows whether there is a console",
+      isinstance(_ljmod._has_console(), bool),
+      str(_ljmod._has_console()))
+
+if sys.platform == "win32":
+    # Run the same check under pythonw.exe, which has no console, and
+    # read the answer back out of a file.
+    import subprocess as _sp
+    import tempfile as _tf
+
+    _probe = pathlib.Path(_tf.gettempdir()) / "lj_console_probe.py"
+    _out = pathlib.Path(_tf.gettempdir()) / "lj_console_probe.out"
+    _out.unlink(missing_ok=True)
+    # the probe has to import the same lj this suite is testing
+    _pkg_parent = str(pathlib.Path(__file__).resolve().parent.parent)
+    _probe.write_text(
+        "import sys, pathlib\n"
+        f"sys.path.insert(0, {_pkg_parent!r})\n"
+        "import lj\n"
+        f"pathlib.Path({str(_out)!r}).write_text(str(lj._has_console()))\n",
+        encoding="utf-8")
+
+    _pyw = pathlib.Path(sys.executable).with_name("pythonw.exe")
+    if _pyw.is_file():
+        _sp.run([str(_pyw), str(_probe)], capture_output=True, timeout=60)
+        _deadline = time.time() + 15
+        while time.time() < _deadline and not _out.exists():
+            time.sleep(0.2)
+        check("pythonw reports that it has no console",
+              _out.exists() and _out.read_text().strip() == "False",
+              _out.read_text().strip() if _out.exists() else "(no answer)")
+    else:
+        print("  skip  the pythonw check      (no pythonw.exe next to this python)")
+    _probe.unlink(missing_ok=True)
+
 print("\n=== 6i. every subcommand takes the dispatcher's calling convention ===")
 # The dispatcher calls run(rest) for every command. A main() that does
 # not accept an argument therefore works from a checkout (where it is
