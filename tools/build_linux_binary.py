@@ -34,13 +34,32 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _find_pyinstaller() -> "str | None":
+    """The pyinstaller to run.
+
+    It is usually not on PATH when the interpreter is named by its full
+    path -- which is how a build is usually run, and how this one was
+    run. A conda env keeps its scripts in the env's own bin directory,
+    so that is looked in as well.
+    """
+    found = shutil.which("pyinstaller")
+    if found:
+        return found
+    bindir = Path(sys.executable).resolve().parent
+    for name in ("pyinstaller", "pyinstaller.exe"):
+        cand = bindir / name
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
 def main() -> int:
     if platform.system() != "Linux":
         raise SystemExit(
             "a Linux binary has to be built on Linux: it links against the "
             "glibc of the machine that builds it"
         )
-    if not shutil.which("pyinstaller"):
+    if not _find_pyinstaller():
         raise SystemExit("pyinstaller is not installed -- pip install pyinstaller")
 
     import lj
@@ -53,7 +72,7 @@ def main() -> int:
         shutil.rmtree(work)
 
     cmd = [
-        "pyinstaller",
+        _find_pyinstaller(),
         "--onefile",              # one file, not a directory of them
         "--name", "lj",
         "--distpath", str(DIST),
