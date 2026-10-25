@@ -685,14 +685,26 @@ if _up:
         check("ctrl-c exits", False, "still running after 10s")
         _p.kill()
 
+    # "the port is released" means nothing is LISTENING on it any more.
+    # It is not the same question as "can this socket bind the port":
+    #   - the readiness probe above left a TIME_WAIT socket on it, and
+    #     a plain bind fails on that on Linux even though the listener
+    #     is gone
+    #   - SO_REUSEADDR would fix the bind but make the check blind: on
+    #     Windows it binds happily even with a live listener, so the
+    #     check would pass when the port is still held
+    # Connecting is the honest test: a refused connection means
+    # nothing is listening.
     time.sleep(0.5)
+    _still_up = False
     try:
-        _s = socket.socket()
-        _s.bind(("127.0.0.1", _ctrl_port))    # raises if still held
+        _s = socket.create_connection(("127.0.0.1", _ctrl_port), timeout=1)
         _s.close()
-        check("the port is released after ctrl-c", True)
-    except OSError as _e:
-        check("the port is released after ctrl-c", False, str(_e))
+        _still_up = True
+    except OSError:
+        _still_up = False
+    check("the port is released after ctrl-c", not _still_up,
+          "something is still listening on it")
 
 print("\n=== 6d. the REPL is a real two-way session ===")
 # Driven as a subprocess with scripted keystrokes, against a real listener.
