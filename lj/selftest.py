@@ -29,11 +29,61 @@ if __package__ in (None, ""):
 PASS, FAIL = [], []
 
 
+def _has_display() -> bool:
+    """Is there a display to open a window on?
+
+    A headless Linux has no DISPLAY, so the GUI tests cannot run there.
+    Windows always has one, even over a remote session.
+    """
+    if os.name == "nt":
+        return True
+    if sys.platform == "darwin":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+# The GUI section's check count. The README's number is the one for a
+# platform that runs everything, and a headless Linux skips the GUI
+# tests, so the count has to be known to work out what that platform
+# should see. It is counted at run time rather than written down: a
+# check added to that section would otherwise make this number wrong
+# in a way nothing else would catch.
+def _gui_check_names() -> list:
+    """The names of the checks in the GUI section.
+
+    Read from the source rather than written down, because the number
+    of them is a property of the source and a list kept by hand goes
+    stale the moment one is added -- which is exactly the sort of
+    quiet drift a self-test is supposed to catch.
+    """
+    src = (HERE / "selftest.py").read_text(encoding="utf-8")
+    i = src.find('print("\\n=== 6h. the GUI ===")')
+    j = src.find('print("\\n=== 6h2.', i)
+    if i < 0 or j < 0:
+        return []
+    return re.findall(r'check\("([^"]+)"', src[i:j])
+
+
+SKIPPED = []       # the checks this platform could not run
+
+
 def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(f"  {'ok  ' if cond else 'FAIL'}  {name}"
           + (f"   {detail}" if detail and not cond else ""))
     return cond
+
+
+def skip(name, why):
+    """A check this platform cannot run.
+
+    Recorded rather than printed and forgotten, because the README
+    quotes the number of checks and that number has to be the same on
+    every platform -- so the count is the total, plus what was
+    skipped here.
+    """
+    SKIPPED.append(name)
+    print(f"  skip  {name}   ({why})")
 
 
 _KIDS = []          # every child process we start, so none is left running
@@ -237,7 +287,7 @@ if os.name == "posix":
           oct(os.stat(tf).st_mode & 0o777) == "0o600",
           oct(os.stat(tf).st_mode & 0o777))
 else:
-    print("  skip  token file is 0600   (no POSIX modes on this platform)")
+    skip("token file is 0600", "no POSIX modes on this platform")
 c, _ = L.load_or_create_token(str(tf), regen=True)
 check("regen-token changes it", c != a)
 
@@ -1087,7 +1137,8 @@ if _have_display:
     except Exception as _e:
         check("the GUI works", False, f"{type(_e).__name__}: {_e}")
 else:
-    print("  skip  the GUI tests         (no display)")
+    for _n in _gui_check_names():
+        skip(_n, "no display")
 
 print("\n=== 6h2. the launcher opens the window when there is no console ===")
 # The Start Menu shortcut runs the GUI launcher with no arguments. The
@@ -1129,7 +1180,8 @@ if sys.platform == "win32":
               _out.exists() and _out.read_text().strip() == "False",
               _out.read_text().strip() if _out.exists() else "(no answer)")
     else:
-        print("  skip  the pythonw check      (no pythonw.exe next to this python)")
+        skip("pythonw reports that it has no console",
+          "no pythonw.exe next to this python")
     _probe.unlink(missing_ok=True)
 
 print("\n=== 6i. every subcommand takes the dispatcher's calling convention ===")
@@ -1188,12 +1240,26 @@ if _readme is not None:
     _m = re.search(r"(\d+) checks", _md)
     if _m:
         _claimed = int(_m.group(1))
-        _actual = len(PASS) + len(FAIL) + 1     # + this check
+        # The total is what ran plus what was skipped: the README
+        # quotes the number for a platform that runs everything, so a
+        # platform that cannot run some of them has to add them back.
+        _actual = len(PASS) + len(FAIL) + len(SKIPPED) + 1   # + this check
         # A checkout runs more checks than an installed copy: some of
         # them need the repository (the README at the root, the source
         # tree itself). So the README's number is the checkout's, and an
         # installed copy is allowed to run fewer.
         _in_checkout = (HERE.parent / "pyproject.toml").is_file()
+        # The number is also platform-dependent: the 0600 assertion
+        # needs POSIX modes (not Windows/NTFS), the GUI tests need a
+        # display (not a headless Linux) and the pythonw check needs a
+        # pythonw.exe next to the interpreter (not Linux). So the
+        # README's number is the one for a checkout on the platform
+        # that runs everything, and a platform that skips some is
+        # allowed to run fewer -- the same rule as for an installed
+        # copy.
+        # The checks this platform cannot run are added back, so the
+        # number is the same everywhere: the README quotes the count
+        # for a platform that runs everything.
         if _in_checkout and _claimed != _actual:
             FAIL.append("the README states the real number of checks "
                         f"(README says {_claimed}, the suite has {_actual})")
