@@ -919,15 +919,23 @@ if _have_display:
                   "still running")
 
             _app.btn.invoke()
+            # Wait for the worker's SERVER, not for the token: the token
+            # is the same one from the previous run, so it is already
+            # set and the wait would return before the new listener had
+            # bound. That is the difference between "the button says
+            # Stop" and "there is a listener behind it".
             _deadline = time.time() + 25
             while time.time() < _deadline:
                 _app._drain()
-                if _app.worker and _app.worker.is_alive() and _app.token:
+                if (_app.worker and _app.worker.is_alive()
+                        and _app.worker.srv is not None):
                     break
                 time.sleep(0.2)
             check("clicking Start starts the listener",
                   _app.worker is not None and _app.worker.is_alive(),
                   _app.worker.error if _app.worker else "?")
+            check("the new worker really has a server",
+                  _app.worker is not None and _app.worker.srv is not None)
             check("the button says Stop and can be clicked",
                   _app.btn.cget("text") == "Stop"
                   and "disabled" not in _app.btn.state(),

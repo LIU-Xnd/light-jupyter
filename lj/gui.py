@@ -21,6 +21,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import urllib.parse
 import webbrowser
@@ -73,14 +74,22 @@ class ListenerThread(threading.Thread):
         self.srv = None
         self.error = None
         self.token = ""
+        self._stopping = False
 
     def run(self):
         try:
+            if self._stopping:
+                return                  # asked to stop before we began
             self.token, note = L.load_or_create_token(self.token_file)
             L.Handler.token = self.token
 
             srv = L._bind_or_explain(self.host, self.port,
                                      self.cert, self.key)
+            if self._stopping:
+                # stopped while we were binding
+                srv.shutdown()
+                srv.server_close()
+                return
             self.srv = srv
             srv.daemon_threads = True
 
@@ -114,6 +123,13 @@ class ListenerThread(threading.Thread):
             self.events.put(("error", self.error))
 
     def stop(self):
+        """Ask the server to stop.
+
+        If the worker has not got as far as binding yet, srv is None and
+        there is nothing to shut down -- but the worker may be about to
+        bind, so it is also told to give up.
+        """
+        self._stopping = True
         srv = self.srv
         if srv is None:
             return
@@ -314,6 +330,23 @@ class App(tk.Tk):
             messagebox.showerror(APP_TITLE, "the port has to be 1-65535")
             return
 
+        # A previous listener may still be holding the port. The stop is
+        # asynchronous, so a Start that comes straight after it would
+        # create a worker that cannot bind -- and the window would say
+        # "Stop" with nothing behind it. Wait for the old one to be
+        # gone and the port to be free first.
+        if self.worker is not None and self.worker.is_alive():
+            self._append("waiting for the previous listener to stop ...")
+            self.worker.stop()
+            deadline = time.time() + 15
+            while time.time() < deadline and self.worker.is_alive():
+                time.sleep(0.1)
+            if self.worker.is_alive():
+                self._append("the previous listener is still running")
+                self._set_button("Start")
+                return
+            self._wait_port_free()
+
         cert = key = None
         if self.tls_var.get():
             cert = os.path.join(os.path.expanduser("~"), ".lj", "cert.pem")
@@ -345,11 +378,39 @@ class App(tk.Tk):
         self._append("stopping ...")
         if self.worker:
             self.worker.stop()
+            # Wait for the port to be released. The server closes its
+            # socket, but the OS can hold it a moment longer -- and
+            # SO_REUSEADDR lets a new server bind the same port while
+            # the old one is still finishing. Then the old server keeps
+            # answering and the new one never gets a request, which
+            # looks like the start silently failed.
+            self._wait_port_free()
         self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
         self.send_btn.configure(state="disabled")
         self.url_var.set("not running")
+
+    def _wait_port_free(self, timeout: float = 10.0) -> bool:
+        """Wait until nothing is listening on our port any more.
+
+        Returns False if the port is still held when the time runs out.
+        """
+        import socket
+        port = int(self.port_var.get())
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            s = socket.socket()
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("127.0.0.1", port))
+                s.close()
+                return True
+            except OSError:
+                s.close()
+                time.sleep(0.1)
+        self._append(f"port {port} is still held by something")
+        return False
 
     def _new_token(self):
         try:
