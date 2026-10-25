@@ -49,6 +49,41 @@ that touches a path, a byte stream or a subprocess has to work there:
 - `os.kill(pid, 0)` is a probe on POSIX but SIGNALISES on Windows; use
   `tasklist` there
 
+## The MSI installer
+
+`pyappdist build` produces `appdist/windows/dist/lj-<version>.msi`. It
+bundles a Python runtime, so the installer works on a machine with
+nothing on it.
+
+Things that are not obvious and cost time to rediscover:
+
+- **WiX v7 needs the OSMF EULA accepted** and stops with
+  `WIX7015`. v6 has no such licence question and produces the same
+  output, so v6 is what is used. The toolset can be unpacked without
+  installing it:
+  ```
+  msiexec /a wix-cli-x64.msi /qn TARGETDIR=<dir>
+  ```
+  A normal install fails with `1603` because the MSI's launch condition
+  wants .NET Desktop Runtime 3.10 exactly, and a newer one is present.
+  The administrative extract sidesteps the check.
+- **pyappdist needs the dependency manager named**, even when there are
+  no dependencies: `manager = "requirements.txt"` in
+  `[tool.pyappdist]`, with an empty `requirements.txt` saying so. The
+  accepted values are `uv`, `poetry`, `pipenv`, `pdm` and
+  `requirements.txt` -- `pip` is NOT one of them.
+- **The entry point is `pyappdist.exe`**, not `python -m pyappdist`;
+  the package has no `__main__`.
+- **The build tree is `.appdist-build/`** and holds a whole Python
+  runtime -- about 150 MB. It is gitignored, and it must stay that way:
+  an early commit included it, 5501 files, and the history had to be
+  rewritten.
+- The pipeline can be run a stage at a time -- `build-wheels`,
+  `fetch-runtime`, `build-image`, `build-launchers`, `gen-wix` -- which
+  is how you rebuild the MSI without re-downloading the runtime.
+- The MSI is unsigned, so Windows warns about an unknown publisher.
+  `pyappdist` has a `sign:` stage for when there is a certificate.
+
 ## Scope
 
 `lj` carries messages. It is not a transport for byte streams, and there
