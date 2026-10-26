@@ -39,7 +39,7 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "3.0.1"       # fallback when not installed as a distribution
+    __version__ = "3.1.0"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 

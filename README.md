@@ -42,7 +42,7 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 3.0.1)
+  lj listen  (light_jupyter 3.1.0)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
@@ -74,6 +74,26 @@ lj remote --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
 That is the whole setup. The worker polls the listener, and the browser
 can now browse that machine's files and run commands on it. It runs until
 you stop it.
+
+**The line the listener prints is what you hand over.** It carries the
+token, so nothing has to be added to it:
+
+```
+    lj remote 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+```
+
+The token is in the fragment because that is where the browser's URL
+puts it, and a fragment is never sent to the server. The far side reads
+it out of the target, so `--token` is not needed:
+
+```bash
+lj remote 192.168.77.160:10000/#token=lj_FE3FQK8Z...   # the token comes along
+lj remote --target 192.168.77.160:10000 --token lj_... # the same, spelled out
+```
+
+The target may also be given as a positional argument. With no target at
+all, both print their usage rather than an error that does not say what
+to type.
 
 The far side works inside a root, so a stray path cannot walk the whole
 filesystem:
@@ -117,6 +137,7 @@ prompt.
 | **v2.6.0** | the version number, the tag and the installed metadata agree. |
 | **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. `lj remote` is the far side's worker. |
 | **v3.0.1** | no https: the traffic is plain HTTP, so run it on a network you control. |
+| **v3.1.0** | the target carries the token and may be positional: `lj remote HOST:PORT/#token=lj_...`. |
 
 ## A window instead of a terminal
 
@@ -188,8 +209,9 @@ and brings the answers back. It runs until you stop it.
 
 | flag | |
 |---|---|
-| `--target IP[:PORT]` | required; defaults to port `10000` |
-| `--token TOKEN` | required |
+| `TARGET` | where the listener is; the same thing as `--target` |
+| `--target IP[:PORT]` | where the listener is; may carry the token as a fragment |
+| `--token TOKEN` | the token; not needed when the target carries it |
 | `--root DIR` | the tree the browser may touch (default: the current directory) |
 | `--interval SEC` | how often to poll (default `1.0`) |
 | `--timeout SEC` | how long a command may run (default `30`) |
@@ -200,8 +222,9 @@ and brings the answers back. It runs until you stop it.
 
 | flag | |
 |---|---|
-| `--target IP[:PORT]` | required; defaults to port `10000` |
-| `--token TOKEN` | required |
+| `TARGET` | where the listener is; the same thing as `--target` |
+| `--target IP[:PORT]` | where the listener is; may carry the token as a fragment |
+| `--token TOKEN` | the token; not needed when the target carries it |
 | `-m, --message TEXT` | what to send (default: stdin) |
 | `-f, --file PATH` | send a file |
 | `--repeat N`, `--interval SEC` | send repeatedly |
@@ -232,12 +255,12 @@ working immediately.
 python -m lj.selftest
 ```
 
-158 checks: token properties, target parsing, the HTTP surface, that a wrong
+177 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
-each other, that the page can authenticate and send, that the dialer's CLI
-handles its failure modes, and that no byte-stream/terminal surface has
-crept in (see Scope). The `0600` assertion only runs where POSIX permission
-bits mean something (not on Windows/NTFS).
+each other, that the page can authenticate and send, that the dialer's and
+the worker's CLIs handle their failure modes, and that no byte-stream/
+terminal surface has crept in (see Scope). The `0600` assertion only runs
+where POSIX permission bits mean something (not on Windows/NTFS).
 
 The suite leaves nothing running: a normal exit reaps every child, and a
 run that is killed leaves its pids in a file that the next run cleans up.

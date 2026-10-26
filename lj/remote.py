@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 
 from . import agent as A
-from .dialer import split_target
+from .dialer import pick_target, split_target
 
 DEFAULT_INTERVAL = 1.0
 DEFAULT_TIMEOUT = 15.0
@@ -161,10 +161,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lj remote",
         description="the far side's worker: carry out what the browser asks")
-    p.add_argument("--target", required=True, metavar="IP[:PORT]",
-                   help="where lj listen is holding the port")
-    p.add_argument("--token", required=True,
-                   help="the token lj listen printed")
+    p.add_argument("target_pos", nargs="?", metavar="TARGET",
+                   help="where lj listen is holding the port; the same "
+                        "thing as --target")
+    p.add_argument("--target", default=None, metavar="IP[:PORT]",
+                   help="where lj listen is holding the port. May carry the "
+                        "token as a fragment: http://HOST:PORT/#token=lj_...")
+    p.add_argument("--token", default=None,
+                   help="the token lj listen printed; not needed when the "
+                        "target carries it")
     p.add_argument("--root", default="~", metavar="DIR",
                    help="the directory the browser's paths are relative to "
                         "(default: the home directory)")
@@ -182,14 +187,38 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    host, port = split_target(args.target)
+
+    try:
+        target = pick_target(args)
+    except ValueError as e:
+        log(str(e))
+        return 2
+
+    if not target:
+        # No target at all: print the usage rather than a bare error.
+        # "the following arguments are required: --target" does not say
+        # what to type; the usage does.
+        build_parser().print_help()
+        return 2
+
+    host, port, frag_token = split_target(target)
     root = os.path.abspath(os.path.expanduser(args.root))
+
+    # The token comes from the flag, or from the target's fragment. The
+    # fragment is there because the listener's banner prints the browser
+    # URL, and the token is in that URL's fragment -- so a line copied
+    # out of the banner needs nothing added to it.
+    token = args.token or frag_token
+    if not token:
+        log("no token: pass --token, or put it in the target as "
+            "http://HOST:PORT/#token=lj_...")
+        return 2
 
     if args.print_only:
         log(f"lj remote  target http://{host}:{port}  root {root}")
         return 0
 
-    return run(host, port, args.token, root, args.interval,
+    return run(host, port, token, root, args.interval,
                once=args.once, forever=not args.once)
 
 

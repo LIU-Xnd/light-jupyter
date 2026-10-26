@@ -435,7 +435,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 3.0.1)",
+        "  lj.listen  (light_jupyter 3.1.0)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",
@@ -455,7 +455,12 @@ def main(argv=None) -> int:
         "",
         "  hand this to the sending side:",
         "",
-        f"    lj dialer --target http://{me}:{args.port} --token {token}",
+        # The token is IN the target now, so the far side needs nothing
+        # added to it -- the line is copy-pasteable as it stands. A
+        # separate --token is a thing to mistype, and a mistyped token
+        # reads as "the two sides disagree" rather than as a typo.
+        f"    lj remote {me}:{args.port}/#token={token}",
+        f"    lj dialer {me}:{args.port}/#token={token}",
         "",
     ]
     if args.print_only:

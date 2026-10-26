@@ -306,19 +306,32 @@ check("regen-token changes it", c != a)
 # ---------------------------------------------------------------- parsing
 
 print("\n=== 2. target parsing ===")
-check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999))
-check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000))
-check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080))
-check("trailing colon", D.split_target("host:") == ("host", 10000))
+check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999, None))
+check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000, None))
+check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080, None))
+check("trailing colon", D.split_target("host:") == ("host", 10000, None))
 # The scheme is accepted and ignored: there is no encryption, so a
 # target is an address and a port. An old "https://..." target string
 # still parses rather than failing.
 check("https:// is accepted and ignored",
-      D.split_target("https://1.2.3.4:9999") == ("1.2.3.4", 9999))
+      D.split_target("https://1.2.3.4:9999") == ("1.2.3.4", 9999, None))
 check("http:// is accepted and ignored",
-      D.split_target("http://1.2.3.4:9999") == ("1.2.3.4", 9999))
+      D.split_target("http://1.2.3.4:9999") == ("1.2.3.4", 9999, None))
 check("the scheme is case-insensitive",
-      D.split_target("HTTPS://1.2.3.4:9999") == ("1.2.3.4", 9999))
+      D.split_target("HTTPS://1.2.3.4:9999") == ("1.2.3.4", 9999, None))
+# The token rides in the fragment, so the listener's browser URL can be
+# handed to the far side as it stands.
+check("the token comes out of the fragment",
+      D.split_target("1.2.3.4:9999/#token=lj_abc") == ("1.2.3.4", 9999, "lj_abc"))
+check("a full url with a fragment",
+      D.split_target("http://1.2.3.4:9999/#token=lj_abc")
+      == ("1.2.3.4", 9999, "lj_abc"))
+check("a trailing slash does not break the port",
+      D.split_target("http://1.2.3.4:9999/") == ("1.2.3.4", 9999, None))
+check("a fragment with no token is no token",
+      D.split_target("1.2.3.4:9999/#something") == ("1.2.3.4", 9999, None))
+check("the token survives another parameter in the fragment",
+      D.split_target("1.2.3.4:9999/#a=1&token=lj_abc") == ("1.2.3.4", 9999, "lj_abc"))
 
 # ---------------------------------------------------------------- server
 
@@ -422,6 +435,41 @@ check("dialer reports 204", "204" in r.stdout, r.stdout[-200:])
 status, body = get(PORT2, "/msg", TOK2)
 check("message arrived", json.loads(body)["msgs"] == ["from the dialer"], body[:120])
 
+# The target can be positional, and the token can ride in its
+# fragment. The listener's banner prints ONE line with the token in
+# it, and that line is what a person hands to the far side -- so the
+# far side has to be able to take it as it stands.
+r = subprocess.run([PY, "-m", "lj", "dialer",
+                    f"127.0.0.1:{PORT2}/#token={TOK2}",
+                    "-m", "from the fragment"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("the target can be positional, with the token in its fragment",
+      r.returncode == 0 and "204" in r.stdout, r.stdout[-200:] + r.stderr[-200:])
+check("the message from the fragment arrived",
+      json.loads(get(PORT2, "/msg", TOK2)[1])["msgs"] == ["from the fragment"],
+      get(PORT2, "/msg", TOK2)[1][:120])
+
+r = subprocess.run([PY, "-m", "lj", "dialer",
+                    f"127.0.0.1:{PORT2}", "-m", "no token at all"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("a target with no token is refused", r.returncode == 2, str(r.returncode))
+check("it says how to give the token", "--token" in (r.stdout + r.stderr),
+      (r.stdout + r.stderr)[-160:])
+
+r = subprocess.run([PY, "-m", "lj", "dialer"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("no target at all prints the usage", "usage:" in r.stdout,
+      r.stdout[-160:])
+check("no target at all is not a success", r.returncode != 0, str(r.returncode))
+
+r = subprocess.run([PY, "-m", "lj", "dialer",
+                    "127.0.0.1:1", "--target", f"127.0.0.1:{PORT2}",
+                    "--token", TOK2, "-m", "x"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("two different targets are refused",
+      r.returncode == 2 and "two different targets" in r.stdout,
+      (r.stdout + r.stderr)[-160:])
+
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", "lj_bad",
                     "-m", "nope"], capture_output=True, text=True, errors="replace", timeout=30)
@@ -444,6 +492,38 @@ r = subprocess.run([PY, "-m", "lj", "dialer",
                    timeout=30)
 status, body = get(PORT2, "/msg", TOK2)
 check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:120])
+
+# ------------------------------------------------------------ remote CLI
+
+# The worker takes the same target shapes as the dialer: positional, or
+# --target, and the token in the fragment. The banner's line for the far
+# side is one of those shapes, so it has to work.
+r = subprocess.run([PY, "-m", "lj", "remote",
+                    f"127.0.0.1:{PORT2}/#token={TOK2}",
+                    "--root", str(tmp), "--once"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("remote takes a positional target with the token in its fragment",
+      r.returncode == 0, (r.stdout + r.stderr)[-200:])
+check("remote says what it is listening to",
+      f"127.0.0.1:{PORT2}" in r.stdout, r.stdout[-200:])
+
+r = subprocess.run([PY, "-m", "lj", "remote",
+                    f"127.0.0.1:{PORT2}", "--root", str(tmp), "--once"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("remote with no token is refused", r.returncode == 2, str(r.returncode))
+
+r = subprocess.run([PY, "-m", "lj", "remote"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("remote with no target prints the usage", "usage:" in r.stdout,
+      r.stdout[-160:])
+
+r = subprocess.run([PY, "-m", "lj", "remote",
+                    "127.0.0.1:1", "--target", f"127.0.0.1:{PORT2}",
+                    "--token", TOK2, "--root", str(tmp), "--once"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("remote with two different targets is refused",
+      r.returncode == 2 and "two different targets" in r.stdout,
+      (r.stdout + r.stderr)[-160:])
 
 # ------------------------------------------------------------- two-way
 
@@ -682,9 +762,14 @@ if _url:
           _u.endswith(f"/#token={_tok}"), _u[-70:])
     check("the token is NOT in the path or query",
           "/#token=" in _u and "?" not in _u, _u)
+    # The line for the far side carries the token IN the target, so it
+    # can be handed over as it stands -- there is nothing to mistype.
     check("the dialer line is filled in too",
-          "lj dialer --target" in _out and "--token " + _tok in _out,
-          _out[-200:])
+          "lj dialer" in _out and _tok in _out, _out[-200:])
+    check("the remote line is filled in too",
+          "lj remote" in _out and _tok in _out, _out[-200:])
+    check("the line for the far side carries the token in the fragment",
+          f"#token={_tok}" in _out, _out[-200:])
     # The URL must carry an address a browser on ANOTHER machine can
     # reach. 127.0.0.1 only works on this machine, and the browser
     # line is the one a person pastes into a browser that is somewhere

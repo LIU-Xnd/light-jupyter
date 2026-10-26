@@ -35,30 +35,76 @@ def log(msg: str = "") -> None:
 
 
 def split_target(spec: str) -> tuple:
-    """'host:port', bare 'host', or a bare port.
+    """Parse a target into (host, port, token).
 
-    Returns (host, port). The traffic is plain HTTP: there is no
-    encryption here, so a target is an address and a port and nothing
-    else. A 'https://' prefix is accepted and ignored, so an old
-    target string still works instead of failing to parse.
+    The target can be:
+
+        host:port
+        http://host:port
+        http://host:port/#token=lj_xxx
+
+    The token is the third value, or None when the target has no
+    fragment. It is there because the listener's banner prints ONE
+    line -- the browser URL -- and the fragment of that line already
+    carries the token. So a line copied out of the banner can be
+    handed straight to the far side, and there is nothing to mistype.
+
+    The traffic is plain HTTP: there is no encryption here, so a target
+    is an address and a port. A 'https://' prefix is accepted and
+    ignored, so an old target string still works instead of failing to
+    parse.
     """
     spec = spec.strip()
+
+    # The fragment. The browser URL puts the token there, and the
+    # browser never sends a fragment to the server, so it is the one
+    # place a token can ride without being in a log or a Referer.
+    token = None
+    if "#" in spec:
+        spec, _, frag = spec.partition("#")
+        for part in frag.split("&"):
+            name, _, value = part.partition("=")
+            if name.strip() == "token" and value.strip():
+                token = value.strip()
+                break
+
     for _s in ("https://", "http://"):
         if spec.lower().startswith(_s):
             spec = spec[len(_s):]
             break
+
+    # A path is not part of a target -- lj's API has no paths -- so
+    # "http://host:10000/" is the same target as "http://host:10000".
+    # Without this the trailing slash lands in the port and the target
+    # does not parse.
+    spec = spec.split("/", 1)[0]
+
     if spec.isdigit():
-        return "127.0.0.1", int(spec)
+        return "127.0.0.1", int(spec), token
     host, sep, port = spec.rpartition(":")
     if not sep:
-        return spec, 10000
+        return spec, 10000, token
     if not port:                  # "host:" -- port left off, take the default
-        return (host or "127.0.0.1"), 10000
+        return (host or "127.0.0.1"), 10000, token
     if not port.isdigit():
         # an IPv6 literal, or junk: hand it back as a bare host and let the
         # connect fail with a clear socket error rather than a parse error
-        return spec, 10000
-    return (host or "127.0.0.1"), int(port)
+        return spec, 10000, token
+    return (host or "127.0.0.1"), int(port), token
+
+
+def pick_target(args) -> str:
+    """The target from the positional or from --target, or "" if neither.
+
+    Both spellings are accepted: the option is what the older scripts
+    use, and the positional is what reads better on a command line.
+    """
+    pos = getattr(args, "target_pos", None)
+    opt = getattr(args, "target", None)
+    if pos and opt and pos != opt:
+        raise ValueError(
+            f"two different targets given: --target {opt!r} and {pos!r}")
+    return pos or opt or ""
 
 
 def read_message(args) -> str:
@@ -260,10 +306,16 @@ def build_parser() -> argparse.ArgumentParser:
         prog="lj dialer",
         description="push a message to an lj_listen that is holding the "
                     "port; this side only ever dials out")
-    p.add_argument("--target", required=True, metavar="IP[:PORT]",
-                   help="where lj listen is listening (default port 10000)")
-    p.add_argument("--token", required=True,
-                   help="the token lj_listen printed")
+    p.add_argument("target_pos", nargs="?", metavar="TARGET",
+                   help="where lj listen is listening; the same thing as "
+                        "--target")
+    p.add_argument("--target", default=None, metavar="IP[:PORT]",
+                   help="where lj listen is listening (default port 10000). "
+                        "May carry the token as a fragment: "
+                        "http://HOST:PORT/#token=lj_...")
+    p.add_argument("--token", default=None,
+                   help="the token lj listen printed; not needed when the "
+                        "target carries it")
     p.add_argument("--message", "-m", default=None,
                    help="the text to send (default: stdin)")
     p.add_argument("--file", "-f", default=None,
@@ -293,10 +345,34 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    host, port = split_target(args.target)
+
+    try:
+        target = pick_target(args)
+    except ValueError as e:
+        log(str(e))
+        return 2
+
+    if not target:
+        # No target at all: print the usage rather than a bare error.
+        # "the following arguments are required: --target" does not say
+        # what to type; the usage does.
+        build_parser().print_help()
+        return 2
+
+    host, port, frag_token = split_target(target)
+
+    # The token comes from the flag, or from the target's fragment. The
+    # fragment is there because the listener's banner prints the browser
+    # URL, and the token is in that URL's fragment -- so a line copied
+    # out of the banner needs nothing added to it.
+    token = args.token or frag_token
+    if not token:
+        log("no token: pass --token, or put it in the target as "
+            "http://HOST:PORT/#token=lj_...")
+        return 2
 
     if args.listen:
-        return collect(host, port, args.token, args.timeout,
+        return collect(host, port, token, args.timeout,
                        args.interval, forever=not args.once,
                        once=args.once)
 
@@ -305,7 +381,7 @@ def main(argv=None) -> int:
     # scripts do not suddenly enter an interactive session.
     have_msg = args.message is not None or args.file or not sys.stdin.isatty()
     if args.interactive or (not have_msg and sys.stdin.isatty()):
-        return repl(host, port, args.token, args.timeout, args.poll)
+        return repl(host, port, token, args.timeout, args.poll)
 
     msg = read_message(args)
     if not msg:
@@ -321,7 +397,7 @@ def main(argv=None) -> int:
     failures = 0
     for i in range(1, args.repeat + 1):
         stamp = time.strftime("%H:%M:%S")
-        status, detail = send(host, port, args.token, msg, args.timeout)
+        status, detail = send(host, port, token, msg, args.timeout)
         if status in (200, 204):
             log(f"  [{stamp}] {i}/{args.repeat} -> {status} in {detail}")
         else:
@@ -333,7 +409,7 @@ def main(argv=None) -> int:
     if args.show:
         log("")
         log("  queue as the browser sees it:")
-        log(f"    {fetch(host, port, args.token, args.timeout)}")
+        log(f"    {fetch(host, port, token, args.timeout)}")
 
     log("")
     return 1 if failures else 0
