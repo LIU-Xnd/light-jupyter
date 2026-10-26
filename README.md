@@ -43,17 +43,21 @@ lj listen
 ```
   lj listen  (light_jupyter 5.0.0)
     listening : 0.0.0.0:10000
-    reachable : 192.168.77.160:10000
+    reachable : <this machine's address>:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
 
-  browser : http://192.168.77.160:10000/#token=lj_FE3FQK8Z...
+  browser : http://<this machine's address>:10000/#token=lj_FE3FQK8Z...
 
   hand this to the far side:
 
-    lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+    lj dialer <this machine's address>:10000/#token=lj_FE3FQK8Z...
 
   ctrl-c to stop
 ```
+
+The address is this machine's own, read at run time -- the first IPv4
+that is not loopback. It is not written down anywhere: the same
+machine changes address when it changes network.
 
 Copy the `browser :` line as it stands - the token is in the fragment, so
 the page authenticates itself. The fragment is never sent to the server,
@@ -67,7 +71,7 @@ person pastes into a browser that is somewhere else.
 **On the machine that cannot be reached** - it dials out:
 
 ```bash
-lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+lj dialer <this machine's address>:10000/#token=lj_FE3FQK8Z...
 ```
 
 That is the whole setup. It polls the listener, does what the browser
@@ -80,7 +84,7 @@ mode: one command that does one thing.
 token, so nothing has to be added to it:
 
 ```
-    lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+    lj dialer <this machine's address>:10000/#token=lj_FE3FQK8Z...
 ```
 
 The token is in the fragment because that is where the browser's URL
@@ -88,8 +92,8 @@ puts it, and a fragment is never sent to the server. The far side reads
 it out of the target, so `--token` is not needed:
 
 ```bash
-lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...  # the token comes along
-lj dialer --target 192.168.77.160:10000 --token lj_...  # the same, spelled out
+lj dialer <this machine's address>:10000/#token=lj_FE3FQK8Z...  # the token comes along
+lj dialer --target <this machine's address>:10000 --token lj_...  # the same, spelled out
 ```
 
 The target may also be given as a positional argument. With no target at
