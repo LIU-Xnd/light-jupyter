@@ -95,16 +95,45 @@ def ensure_ui_extension() -> None:
     log(f"  UI extension: cached {dll.stat().st_size} bytes")
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> None:
-    r = subprocess.run(cmd, cwd=str(cwd) if cwd else None,
-                       capture_output=True, text=True, errors="replace")
-    if r.returncode != 0:
-        sys.stderr.write((r.stdout + r.stderr)[-4000:])
-        raise SystemExit(f"failed: {' '.join(cmd[:3])} ... ({r.returncode})")
-    out = (r.stdout + r.stderr).strip()
-    if out:
-        for line in out.splitlines():
-            log(f"    {line}")
+def run(cmd: list[str], cwd: Path | None = None, attempts: int = 3) -> None:
+    """Run a stage, retrying it if it failed on the network.
+
+    The stages that fetch the runtime talk to github over TLS, and the
+    handshake fails intermittently on this machine: measured over six
+    identical requests, four succeeded and two ended with
+    "SSL: UNEXPECTED_EOF_WHILE_READING". curl does not have the
+    problem, so it is the TLS layer, not the network.
+
+    A build that dies on the first unlucky handshake is a build that
+    fails for no reason, so a failure that looks like a network error
+    is retried. The output of the failed attempt is kept, so the final
+    error says what really happened.
+    """
+    import time
+
+    last = ""
+    for attempt in range(1, attempts + 1):
+        r = subprocess.run(cmd, cwd=str(cwd) if cwd else None,
+                           capture_output=True, text=True, errors="replace")
+        if r.returncode == 0:
+            out = (r.stdout + r.stderr).strip()
+            if out:
+                for line in out.splitlines():
+                    log(f"    {line}")
+            return
+
+        last = (r.stdout + r.stderr)[-4000:]
+        network = any(k in last for k in (
+            "UNEXPECTED_EOF", "SSLError", "URLError", "urlopen error",
+            "download failed", "timed out", "Temporary failure",
+            "Connection reset", "RemoteDisconnected"))
+        if not network or attempt == attempts:
+            break
+        log(f"    the network failed; retrying ({attempt}/{attempts})")
+        time.sleep(3)
+
+    sys.stderr.write(last)
+    raise SystemExit(f"failed: {' '.join(cmd[:3])} ... ({r.returncode})")
 
 
 def pyappdist() -> str:
