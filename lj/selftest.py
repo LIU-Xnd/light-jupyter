@@ -576,6 +576,32 @@ r = subprocess.run([PY, "-m", "lj", "remote"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("there is no lj remote any more", r.returncode != 0, str(r.returncode))
 
+# No internal address is written down anywhere.
+#
+# The address the banner prints is this machine's own, read at run
+# time -- the same machine changes address when it changes network --
+# so an example with a real address in it is an address somebody will
+# copy, and it will be wrong. The guard reads the tracked tree rather
+# than a list of places, because a list goes stale.
+_git = HERE.parent / ".git"
+if _git.is_dir():
+    _hits = []
+    for _f in subprocess.run(
+            ["git", "ls-files"], cwd=str(HERE.parent),
+            capture_output=True, text=True, errors="replace").stdout.split():
+        if not _f.endswith((".py", ".md", ".toml", ".txt", ".rtf")):
+            continue
+        try:
+            _text = (HERE.parent / _f).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for _i, _line in enumerate(_text.splitlines(), 1):
+            if re.search(r"\b(?:192\.168|10\.\d+|172\.(?:1[6-9]|2\d|3[01]))"
+                         r"\.\d+\.\d+\b", _line):
+                _hits.append(f"{_f}:{_i}")
+    check("no internal address is written down in the tree",
+          not _hits, ", ".join(_hits[:4]))
+
 # ------------------------------------------------------------- two-way
 
 print("\n=== 6. the file and terminal channel ===")

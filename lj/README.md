@@ -230,7 +230,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-196 checks: token properties, target parsing, the HTTP surface, that a wrong
+197 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the message endpoints are gone, that
 the page can authenticate, that the dialer's CLI handles its failure modes,
 and that no byte-stream/terminal surface has crept in (see Scope). The
