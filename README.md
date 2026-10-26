@@ -47,11 +47,11 @@ lj listen
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
 
-  browser : http://127.0.0.1:10000/#token=lj_FE3FQK8Z...
+  browser : http://192.168.77.160:10000/#token=lj_FE3FQK8Z...
 
   hand this to the sending side:
 
-    lj dialer --target http://192.168.77.160:10000 --token lj_FE3FQK8Z...
+    lj remote --target http://192.168.77.160:10000 --token lj_FE3FQK8Z...
 
   ctrl-c to stop
 ```
@@ -59,6 +59,11 @@ lj listen
 Copy the `browser :` line as it stands - the token is in the fragment, so
 the page authenticates itself. The fragment is never sent to the server,
 so the token cannot leak into a log or a `Referer` header.
+
+The address in that line is the machine's own IPv4, read at run time -
+the first one that is not loopback. Not `127.0.0.1`: that works only on
+the machine running the listener, and the browser line is the one a
+person pastes into a browser that is somewhere else.
 
 **On the machine that cannot be reached** - it dials out:
 
@@ -261,7 +266,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-164 checks: token properties, target parsing, the HTTP surface, that a wrong
+168 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
 handles its failure modes, that https really rejects an untrusted

@@ -50,6 +50,7 @@ import secrets
 import signal
 import threading
 import socket
+import subprocess
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -320,15 +321,72 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def local_addr() -> str:
-    """Our address on the path out -- any destination works, nothing is sent."""
+    """This machine's own IPv4 -- the first one that is not loopback.
+
+    It is the address a browser on another machine can reach, so it is
+    the one that goes in the URL.
+
+    The addresses are read from the machine, never written down: a box
+    can have several (a LAN one, a VPN one, a container one), and the
+    first non-loopback one is the one on the path out.
+
+    The socket trick is the fallback: connecting a UDP socket picks the
+    route the kernel would use, and no packet leaves -- it is a
+    connectionless protocol, so nothing is sent. It is tried first
+    because it is one syscall and does not depend on a tool being
+    installed.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("1.1.1.1", 9))          # discard port; no packets leave
-        return s.getsockname()[0]
+        addr = s.getsockname()[0]
+        if addr and not addr.startswith("127."):
+            return addr
     except OSError:
-        return "127.0.0.1"
+        pass
     finally:
         s.close()
+
+    for addr in _interface_ipv4s():
+        return addr
+    return "127.0.0.1"
+
+
+def _interface_ipv4s() -> list:
+    """The IPv4 addresses on the interfaces, in the system's own order.
+
+    Loopback and the link-local ones are left out: neither is an
+    address a browser on another machine can reach.
+    """
+    found = []
+    try:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { "
+                 "$_.IPAddress -notlike '127.*' -and "
+                 "$_.IPAddress -notlike '169.254.*' } | "
+                 "Select-Object -ExpandProperty IPAddress"],
+                capture_output=True, text=True, errors="replace").stdout
+        else:
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show"],
+                                 capture_output=True, text=True,
+                                 errors="replace").stdout
+    except (OSError, ValueError):
+        return found
+
+    for line in out.splitlines():
+        if os.name == "nt":
+            addr = line.strip()
+        else:
+            parts = line.split()
+            if "inet" not in parts:
+                continue
+            addr = parts[parts.index("inet") + 1].split("/")[0]
+        if addr and addr.count(".") == 3 and not addr.startswith("127.") \
+                and not addr.startswith("169.254."):
+            found.append(addr)
+    return found
 
 
 def _is_ipv4(s: str) -> bool:
@@ -560,9 +618,17 @@ def main(argv=None) -> int:
         f"    token     : {token}",
         f"                ({note})",
         "",
-        # the token rides in the fragment, so this whole line is copy-pasteable:
-        # open it as-is and the page authenticates itself
-        f"  browser : {scheme}://127.0.0.1:{args.port}/#token={token}",
+        # The token rides in the fragment, so this whole line is
+        # copy-pasteable: open it as-is and the page authenticates
+        # itself.
+        #
+        # The address is the machine's own IPv4 -- the one on the path
+        # out -- not 127.0.0.1. A loopback URL only works on this
+        # machine, and the browser line is the one a person pastes into
+        # a browser that is somewhere else. (On this machine 127.0.0.1
+        # would work too, but the address that works everywhere is the
+        # one to print.)
+        f"  browser : {scheme}://{me}:{args.port}/#token={token}",
         "",
         "  hand this to the sending side:",
         "",

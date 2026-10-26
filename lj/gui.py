@@ -284,7 +284,16 @@ class App(tk.Tk):
 
         scheme = "https" if self.tls_var.get() else "http"
         host = self.host_var.get()
-        shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        # The address to put in the URL is the one the browser can
+        # actually reach. When the listener is on every interface
+        # ("0.0.0.0", the default), that is this machine's own address
+        # on the path out -- not 127.0.0.1, which only works on this
+        # machine, and the URL is the one a person pastes into a
+        # browser that is somewhere else.
+        if host in ("0.0.0.0", "::", ""):
+            shown = L.local_addr()
+        else:
+            shown = host
         self.address = f"{shown}:{self.port_var.get()}"
         self.url_var.set(f"{scheme}://{self.address}/#token={token}")
 

@@ -670,6 +670,17 @@ if _url:
     check("the dialer line is filled in too",
           "lj dialer --target" in _out and "--token " + _tok in _out,
           _out[-200:])
+    # The URL must carry an address a browser on ANOTHER machine can
+    # reach. 127.0.0.1 only works on this machine, and the browser
+    # line is the one a person pastes into a browser that is somewhere
+    # else -- so a loopback URL there means "it does not work" for
+    # everyone but the person at the keyboard.
+    _host = _u.split("://", 1)[1].split(":", 1)[0].split("/")[0]
+    check("the browser URL is not a loopback address",
+          _host not in ("127.0.0.1", "localhost", "0.0.0.0", "::1"),
+          _u)
+    check("the browser URL uses this machine's own address",
+          _host == L.local_addr(), f"{_host} vs {L.local_addr()}")
 
 print("\n=== 6c. startup check and ctrl-c ===")
 # The port self-probe must run BEFORE the banner, so a port held by
@@ -1041,6 +1052,27 @@ if _have_display:
             check("the GUI shows the url with the token",
                   _gurl.startswith(f"http://127.0.0.1:{_gport}/")
                   and "#token=lj_" in _gurl, _gurl)
+
+            # With the default host ("0.0.0.0", every interface) the
+            # URL must carry an address a browser on another machine
+            # can reach -- not 127.0.0.1, which only works on this
+            # machine. That is the case a user hits: the default.
+            #
+            # The app's own token is kept: _started sets it, and the
+            # page request below authenticates with it.
+            _app.host_var.set("0.0.0.0")
+            _app._started(_app.worker.srv, _app.token, "test")
+            _gurl2 = _app.url_var.get()
+            _ghost = _gurl2.split("://", 1)[1].split(":", 1)[0].split("/")[0]
+            check("the GUI's url is not a loopback address",
+                  _ghost not in ("127.0.0.1", "localhost", "0.0.0.0", "::1"),
+                  _gurl2)
+            check("the GUI's url uses this machine's own address",
+                  _ghost == L.local_addr(),
+                  f"{_ghost} vs {L.local_addr()}")
+            # put it back for the rest of the GUI checks
+            _app.host_var.set("127.0.0.1")
+            _app._started(_app.worker.srv, _app.token, "test")
 
             # the page is really served on that port
             _s, _b = get(_gport, "/", None)
