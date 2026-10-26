@@ -57,14 +57,25 @@ def _gui_check_names() -> list:
     quiet drift a self-test is supposed to catch.
     """
     src = (HERE / "selftest.py").read_text(encoding="utf-8")
-    # The section headings are the anchors, and they move when a
-    # section is added or removed -- so they are found by their TEXT,
-    # not by their number. A number here went stale the moment a
-    # section was renumbered: the function found nothing, the skipped
-    # checks were never recorded, and the count on a headless Linux
-    # came out twenty short.
-    i = src.find("=== 6g. the GUI ===")
-    j = src.find("=== 6h. the launcher", i)
+    # The section headings are the anchors. They are found by their
+    # TEXT, not their number, so a renumbering does not silently
+    # break this.
+    #
+    # They have to be found as HEADINGS, not as text anywhere: this
+    # function's own source mentions the same words, and a plain
+    # find() matched THAT first -- so the function returned its own
+    # body, found no checks in it, and the skipped checks were never
+    # recorded. The count on a headless Linux came out twenty short
+    # and nothing said why. A heading is a line that STARTS with
+    # print(" and carries the section title.
+    def _heading(title: str, after: int = 0) -> int:
+        pat = re.compile(r'^print\("\\n=== ' + re.escape(title) + r'[^"]*"\)',
+                         re.M)
+        m = pat.search(src, after)
+        return m.start() if m else -1
+
+    i = _heading("6g. the GUI")
+    j = _heading("6h. the launcher", i)
     if i < 0 or j < 0:
         return []
     return re.findall(r'check\("([^"]+)"', src[i:j])
