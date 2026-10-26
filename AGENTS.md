@@ -132,9 +132,9 @@ Things that are not obvious and cost time to rediscover:
 
 ## The Linux binary
 
-`tools/build_linux_binary.py` freezes the dialer into one file with
-PyInstaller, so it can run on a machine with no Python, no conda and no
-pip -- which is the whole point of the dialer side.
+`tools/build_linux_binary.py` freezes the whole dispatcher into one
+file with PyInstaller, so it can run on a machine with no Python, no
+conda and no pip -- which is the whole point of the far side.
 
 Things that are not obvious:
 
@@ -152,7 +152,38 @@ Things that are not obvious:
 - **The window is excluded.** tkinter is Windows-only here, and
   excluding it keeps the binary smaller.
 - The entry point is `tools/freeze_entry.py`, not `lj.dialer:main` --
-  PyInstaller wants a script.
+  PyInstaller wants a script. It freezes the DISPATCHER, not one
+  subcommand: freezing `lj.dialer:main` gives a binary that can only
+  be a dialer, and the far side's worker mode then does not exist in
+  it. Freeze `lj.main` and the binary carries every subcommand.
+- **The build needs the pyinstaller that belongs to the interpreter
+  running it.** `shutil.which("pyinstaller")` finds the one on PATH,
+  which is not necessarily the one in the environment the script is
+  running under -- so run the build with the environment's own python:
+  `~/miniconda3/envs/lj-dev/bin/python tools/build_linux_binary.py`.
+  With the system python it says "pyinstaller is not installed" and
+  stops.
+- **A copy in the home directory is a copy, not a link.** `~/lj` is
+  the frozen binary, put there so it can be run from anywhere. It has
+  to be refreshed after a rebuild: `cp ~/LjDev/dist/linux/lj ~/lj`.
+
+## The tags are history, and moving them breaks the versions
+
+A tag names a release. A release has a version number in it, and the
+version number is in `pyproject.toml` at that commit. So moving a tag
+to a different commit makes the tag name and the version it installs
+disagree -- `v3.0.0` pointing at a tree that says `4.0.0` -- and the
+check in `lj/selftest.py` that the tag, the file and the installed
+metadata agree stops being about the same thing.
+
+So a tag is left where it is, and the sequence carries the history:
+`v3.0.0` (https) -> `v3.0.1` (https removed) -> `v3.1.0` -> `v3.1.1`
+-> `v4.0.0` (`lj remote` and `lj dialer` merged). The README describes
+the product as it is now; the tags say what each release was.
+
+The reason a version was removed rather than deprecated is in the
+README: the traffic is plain HTTP, and the token is a shell credential,
+so running it on a network you do not control is the thing to avoid.
 
 ## The Windows launcher has no console
 
@@ -208,6 +239,34 @@ redirection. The process is run directly.
 `/raw` / `/stream` / `/ws` endpoint appears, or if a PTY is opened
 anywhere in the agent. Do not widen it without changing that decision on
 purpose.
+
+## The far side is ONE command
+
+`lj dialer` is the far side, and it has two modes:
+
+- `--worker` -- poll for work, do it, bring the answers back. This is
+  the daemon the browser drives.
+- no flag -- push a message, or collect what the page sends.
+
+They were two commands (`lj dialer` and `lj remote`) until v4.0.0.
+They had the same arguments, the same target format, the same token
+handling and the same "dial out, never accept" shape, so two commands
+meant two parsers, two sets of flags, two help texts, and a user who
+had to know which half of the far side they were running.
+
+**Do not split them back into two commands.** The mode is a flag, and
+the flag is the thing that was already different. The messenger is the
+default, so the common one-liner keeps working.
+
+Two things follow from the merge and are easy to get wrong:
+
+- **A shared flag cannot have one default for both modes.** `--interval`
+  meant "seconds between repeats" (5s) for a message and "seconds
+  between polls" (1s) for a worker; `--timeout` meant 10s and 15s. The
+  default is now chosen by the mode at run time, not by the parser.
+- **`lj remote` must not quietly still work.** The suite asserts that
+  the dispatcher answers "unknown command" for it, because a second
+  name for the same thing is the thing the merge removed.
 
 ## The token is a shell credential
 
