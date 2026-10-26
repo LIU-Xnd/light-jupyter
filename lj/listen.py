@@ -37,8 +37,8 @@ compared in constant time, and it is still the only thing standing
 between a stranger and that machine -- but it is a PASSWORD for the far
 side now, not a messaging credential.
 
-So use HTTPS, or a network you control. And keep the far side's
-account to what you would be willing to lose.
+So use a network you control. And keep the far side's account to what
+you would be willing to lose.
 """
 
 import argparse
@@ -307,14 +307,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"where the token is kept (default: {TOKEN_FILE})")
     p.add_argument("--regen-token", action="store_true",
                    help="mint a new token and discard the stored one")
-    p.add_argument("--cert", metavar="PEM",
-                   help="serve HTTPS with this certificate")
-    p.add_argument("--key", metavar="PEM",
-                   help="the private key for --cert (default: same path, .key)")
-    p.add_argument("--gen-cert", metavar="DIR", nargs="?",
-                   const="~/.lj",
-                   help="generate a self-signed certificate and key in DIR "
-                        "(default ~/.lj) and exit")
     p.add_argument("--print-only", action="store_true",
                    help="print the banner and exit without listening")
     return p
@@ -357,19 +349,6 @@ def local_addr() -> str:
     return "127.0.0.1"
 
 
-def local_addrs() -> list:
-    """Every IPv4 this machine has, in the system's own order.
-
-    The first one is the one to use: a box can be on several networks
-    at once, and the first non-loopback address is the one on the path
-    out.
-
-    The rest matter too -- for a certificate, which has to be valid
-    for whichever address the far side dials.
-    """
-    return _interface_ipv4s()
-
-
 def _interface_ipv4s() -> list:
     """The IPv4 addresses on the interfaces, in the system's own order.
 
@@ -407,126 +386,7 @@ def _interface_ipv4s() -> list:
     return found
 
 
-def _is_ipv4(s: str) -> bool:
-    parts = s.split(".")
-    return (len(parts) == 4
-            and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts))
-
-
-def generate_self_signed(directory: str, host: str = "localhost") -> tuple:
-    """Make a self-signed certificate and key with openssl.
-
-    openssl is a system tool, not a Python dependency -- lj stays
-    standard-library only. The cert carries both 'localhost' and the
-    machine's own address as SANs, so a client that trusts it by name
-    works whichever name it uses to reach the host.
-    """
-    import os
-    import subprocess
-
-    directory = os.path.expanduser(directory)
-    os.makedirs(directory, exist_ok=True)
-    cert = os.path.join(directory, "cert.pem")
-    key = os.path.join(directory, "key.pem")
-
-    # openssl is a C program: it takes the path as given, and a Windows
-    # path with backslashes becomes "C:\dir\file" inside its own path
-    # handling, which it then cannot open. Forward slashes work on both.
-    # The certificate has to be valid for the name the other side will
-    # use to reach this host. A certificate with only "localhost" in its
-    # SAN list fails hostname verification the moment the other machine
-    # dials the routable address -- and the error says "IP address
-    # mismatch", which reads like a wrong certificate rather than a
-    # missing name. So: localhost, 127.0.0.1, the machine's own IPv4,
-    # and its hostname.
-    names = ["localhost"]
-    ips = ["127.0.0.1"]
-    if host and host not in names:
-        if _is_ipv4(host):
-            ips.append(host)
-        else:
-            names.append(host)
-    # EVERY address this machine has, not just one. A box can be on
-    # more than one network -- a wired one and a wireless one, say --
-    # and which one the far side reaches is decided by the routing
-    # out of this machine, not by anything lj knows. A certificate
-    # that carries only the first one fails on the second with
-    # "IP address mismatch", which reads like the wrong certificate
-    # rather than a missing name.
-    for _own in local_addrs():
-        if _own and _own not in ips and _own not in names:
-            ips.append(_own)
-    _hn = socket.gethostname()
-    if _hn and _hn not in names:
-        names.append(_hn)
-    _fqdn = socket.getfqdn()
-    if _fqdn and _fqdn not in names:
-        names.append(_fqdn)
-
-    alt = ["[alt]"]
-    for _i, _n in enumerate(names, 1):
-        alt.append(f"DNS.{_i} = {_n}")
-    for _i, _n in enumerate(ips, 1):
-        alt.append(f"IP.{_i} = {_n}")
-
-    cnf = os.path.join(directory, "openssl.cnf").replace("\\", "/")
-    with open(os.path.join(directory, "openssl.cnf"), "w", encoding="utf-8") as fh:
-        fh.write(
-            "[req]\n"
-            "distinguished_name = dn\n"
-            "x509_extensions = ext\n"
-            "prompt = no\n"
-            "[dn]\n"
-            f"CN = {host}\n"
-            "[ext]\n"
-            "subjectAltName = @alt\n"
-            "basicConstraints = critical, CA:TRUE\n"
-            "keyUsage = digitalSignature, keyEncipherment, keyCertSign\n"
-            "extendedKeyUsage = serverAuth\n"
-            + "\n".join(alt) + "\n")
-
-    cmd = ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-           "-keyout", key.replace("\\", "/"), "-out", cert.replace("\\", "/"),
-           "-days", "3650", "-config", cnf, "-set_serial", "1"]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except FileNotFoundError:
-        raise SystemExit("openssl is not installed -- cannot generate a certificate")
-    if r.returncode != 0:
-        raise SystemExit(f"openssl failed:\n{r.stderr.strip()}")
-    for f in (cert, key):
-        try:
-            os.chmod(f, 0o600)
-        except OSError:
-            pass
-    return cert, key
-
-
-def _wrap_tls(srv, certfile: str, keyfile: str):
-    """Put TLS on a plain HTTP server.
-
-    ssl is in the standard library, so this costs no dependency -- but it
-    does mean the cert and key have to exist and match, and that a
-    self-signed cert has to be trusted on the other side somehow.
-    """
-    import ssl
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    try:
-        ctx.load_cert_chain(certfile=certfile, keyfile=keyfile)
-    except FileNotFoundError as e:
-        raise SystemExit(f"cannot read the certificate or key: {e}")
-    except ssl.SSLError as e:
-        raise SystemExit(
-            f"the certificate and key do not work together: {e}\n"
-            f"  they must be the same pair (openssl x509 -in {certfile} "
-            f"-noout -modulus | openssl rsa -in {keyfile} -noout -modulus)")
-    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-    return srv
-
-
-def _bind_or_explain(host: str, port: int, certfile: "str | None" = None,
-                     keyfile: "str | None" = None):
+def _bind_or_explain(host: str, port: int):
     """Bind, or say clearly which port is taken."""
     from http.server import ThreadingHTTPServer
     try:
@@ -536,13 +396,10 @@ def _bind_or_explain(host: str, port: int, certfile: "str | None" = None,
             raise SystemExit(
                 f"cannot bind {host}:{port} -- already in use.")
         raise
-    if certfile:
-        _wrap_tls(srv, certfile, keyfile)
     return srv
 
 
-def _serves_our_page(host: str, port: int, timeout: float = 3.0,
-                    tls: bool = False) -> bool:
+def _serves_our_page(host: str, port: int, timeout: float = 3.0) -> bool:
     """True if a request to our own port comes back with our page.
 
     Connect to whatever address the browser would use, not to 127.0.0.1:
@@ -553,19 +410,9 @@ def _serves_our_page(host: str, port: int, timeout: float = 3.0,
     import urllib.error
 
     probe = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
-    scheme = "https" if tls else "http"
-    url = f"{scheme}://{probe}:{port}/"
-    ctx = None
-    if tls:
-        # our own certificate, which the client would reject as
-        # self-signed -- the probe is checking that WE answer, not that
-        # the certificate is trusted
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+    url = f"http://{probe}:{port}/"
     try:
-        with urllib.request.urlopen(url, timeout=timeout, context=ctx) as r:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
     except (urllib.error.URLError, OSError):
         # Nothing answered. That is not the same as something else
@@ -582,62 +429,13 @@ def _serves_our_page(host: str, port: int, timeout: float = 3.0,
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.gen_cert is not None:
-        cert, key = generate_self_signed(args.gen_cert, host=local_addr())
-        print(f"  certificate : {cert}")
-        print(f"  key         : {key}")
-        print("")
-        print("  the certificate is self-signed. The other side must be told")
-        print("  to trust it:")
-        print("")
-        print(f"    lj dialer --target https://HOST:PORT --token TOK \\")
-        print(f"                --ca {cert}")
-        print("")
-        print("  or, for a quick test, --insecure (do not use across a")
-        print("  network you do not control).")
-        return 0
-
     token, note = load_or_create_token(args.token_file, args.regen_token)
     Handler.token = token
-
-    # --cert may be given alone: the key is then the same path with a
-    # .key suffix, which is how openssl names them by convention
-    certfile = keyfile = None
-    if args.cert:
-        certfile = os.path.expanduser(args.cert)
-        # the directory and the base name are handled separately, so a
-        # path with mixed separators still gives a sibling with the right
-        # name -- os.path.splitext on "C:/x/y\cert.pem" yields a stem that
-        # still contains the directory, and the naive stem + ".pem" is
-        # then "C:/x/y.pem" rather than "C:/x/key.pem"
-        certdir = os.path.dirname(certfile)
-        base = os.path.basename(certfile)
-        stem = os.path.splitext(base)[0]
-        if args.key:
-            keyfile = os.path.expanduser(args.key)
-        else:
-            # The names are siblings, not the same stem: cert.pem pairs
-            # with key.pem, server.crt with server.key. Deriving
-            # "cert.pem" -> "cert.pem" would silently use the CERTIFICATE
-            # as the key, and the error says nothing about that.
-            ext = ".key" if base.endswith((".crt", ".cer")) else ".pem"
-            keyfile = os.path.join(certdir, "key" + ext)
-        if not os.path.exists(keyfile):
-            # server.crt pairs with server.key -- the same stem
-            alt = os.path.join(certdir, stem + ".key")
-            if os.path.exists(alt) and os.path.abspath(alt) != os.path.abspath(certfile):
-                keyfile = alt
-            else:
-                raise SystemExit(
-                    f"no private key found for {certfile}.\n"
-                    f"  looked for {keyfile} and {alt}\n"
-                    f"  pass --key explicitly")
-    scheme = "https" if certfile else "http"
 
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 3.0.0)",
+        "  lj.listen  (light_jupyter 3.0.1)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",
@@ -653,11 +451,11 @@ def main(argv=None) -> int:
         # a browser that is somewhere else. (On this machine 127.0.0.1
         # would work too, but the address that works everywhere is the
         # one to print.)
-        f"  browser : {scheme}://{me}:{args.port}/#token={token}",
+        f"  browser : http://{me}:{args.port}/#token={token}",
         "",
         "  hand this to the sending side:",
         "",
-        f"    lj dialer --target {scheme}://{me}:{args.port} --token {token}",
+        f"    lj dialer --target http://{me}:{args.port} --token {token}",
         "",
     ]
     if args.print_only:
@@ -670,7 +468,7 @@ def main(argv=None) -> int:
     # still leave someone else answering -- which looks exactly like a
     # broken lj. Printing first would leave a dead URL on screen after a
     # failed check, and the user would copy it anyway.
-    srv = _bind_or_explain(args.host, args.port, certfile, keyfile)
+    srv = _bind_or_explain(args.host, args.port)
     srv.daemon_threads = True
 
     # Serving has to start BEFORE the probe: nothing answers on the port
@@ -681,7 +479,7 @@ def main(argv=None) -> int:
                           daemon=True)
     _t.start()
 
-    if not _serves_our_page(args.host, args.port, tls=bool(certfile)):
+    if not _serves_our_page(args.host, args.port):
         srv.shutdown()
         srv.server_close()
         raise SystemExit(

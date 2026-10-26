@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 
 from . import agent as A
-from .dialer import make_context, split_target
+from .dialer import split_target
 
 DEFAULT_INTERVAL = 1.0
 DEFAULT_TIMEOUT = 15.0
@@ -44,15 +44,15 @@ def log(msg: str = "") -> None:
 
 
 def _post(host: str, port: int, token: str, path: str, payload: dict,
-          scheme: str = "http", ctx=None, timeout: float = DEFAULT_TIMEOUT):
+          timeout: float = DEFAULT_TIMEOUT):
     """POST JSON and return the status and the parsed body."""
-    url = f"{scheme}://{host}:{port}{path}"
+    url = f"http://{host}:{port}{path}"
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"X-LJ-Token": token,
                  "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
             try:
                 return r.status, json.loads(body)
@@ -65,12 +65,12 @@ def _post(host: str, port: int, token: str, path: str, payload: dict,
 
 
 def _get(host: str, port: int, token: str, path: str,
-         scheme: str = "http", ctx=None, timeout: float = DEFAULT_TIMEOUT):
+         timeout: float = DEFAULT_TIMEOUT):
     """GET JSON and return the status and the parsed body."""
-    url = f"{scheme}://{host}:{port}{path}"
+    url = f"http://{host}:{port}{path}"
     req = urllib.request.Request(url, headers={"X-LJ-Token": token})
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
             try:
                 return r.status, json.loads(body)
@@ -82,14 +82,13 @@ def _get(host: str, port: int, token: str, path: str,
         return None, {}
 
 
-def poll_once(host: str, port: int, token: str, root: str,
-              scheme: str = "http", ctx=None) -> list:
+def poll_once(host: str, port: int, token: str, root: str) -> list:
     """Take whatever commands are waiting, run them, post the results.
 
     Returns the list of results it produced. One poll, one pass -- the
     caller decides whether to do it again.
     """
-    status, data = _get(host, port, token, "/cmd", scheme, ctx)
+    status, data = _get(host, port, token, "/cmd")
     if status is None:
         raise ConnectionError(f"cannot reach {host}:{port}")
     if status == 401:
@@ -107,17 +106,16 @@ def poll_once(host: str, port: int, token: str, root: str,
         result["seq"] = seq
         result["op"] = op
         results.append(result)
-        _post(host, port, token, "/res", result, scheme, ctx)
+        _post(host, port, token, "/res", result)
     return results
 
 
 def run(host: str, port: int, token: str, root: str, interval: float,
-        scheme: str = "http", ctx=None, once: bool = False,
-        forever: bool = True) -> int:
+        once: bool = False, forever: bool = True) -> int:
     """Poll for work until told to stop."""
     log("")
     log("  lj remote -- the far side's worker")
-    log(f"    listening to {scheme}://{host}:{port}")
+    log(f"    listening to http://{host}:{port}")
     log(f"    root       : {root}")
     log(f"    poll every {interval:g}s")
     log("")
@@ -128,7 +126,7 @@ def run(host: str, port: int, token: str, root: str, interval: float,
     seen = 0
     while True:
         try:
-            results = poll_once(host, port, token, root, scheme, ctx)
+            results = poll_once(host, port, token, root)
             for r in results:
                 seen += 1
                 if r.get("ok"):
@@ -163,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lj remote",
         description="the far side's worker: carry out what the browser asks")
-    p.add_argument("--target", required=True, metavar="[https://]IP[:PORT]",
+    p.add_argument("--target", required=True, metavar="IP[:PORT]",
                    help="where lj listen is holding the port")
     p.add_argument("--token", required=True,
                    help="the token lj listen printed")
@@ -175,11 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                    help=f"seconds to wait for one request "
                         f"(default: {DEFAULT_TIMEOUT:g})")
-    p.add_argument("--ca", metavar="PEM",
-                   help="the certificate to trust, for an https target")
-    p.add_argument("--insecure", action="store_true",
-                   help="accept any certificate -- not protection, only "
-                        "convenience")
     p.add_argument("--once", action="store_true",
                    help="poll once and exit")
     p.add_argument("--print-only", action="store_true",
@@ -189,20 +182,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    host, port, scheme = split_target(args.target)
+    host, port = split_target(args.target)
     root = os.path.abspath(os.path.expanduser(args.root))
 
     if args.print_only:
-        log(f"lj remote  target {scheme}://{host}:{port}  root {root}")
+        log(f"lj remote  target http://{host}:{port}  root {root}")
         return 0
 
-    try:
-        ctx = make_context(args.ca, args.insecure)
-    except (OSError, ValueError) as e:
-        log(f"cannot use the certificate: {e}")
-        return 2
-
-    return run(host, port, args.token, root, args.interval, scheme, ctx,
+    return run(host, port, args.token, root, args.interval,
                once=args.once, forever=not args.once)
 
 

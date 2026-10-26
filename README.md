@@ -42,7 +42,7 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 3.0.0)
+  lj listen  (light_jupyter 3.0.1)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
@@ -115,35 +115,8 @@ prompt.
 | **v2.4.1** | the self-test no longer leaves listeners behind; the REPL section survives Linux. |
 | **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
 | **v2.6.0** | the version number, the tag and the installed metadata agree. |
-| **v2.7.0** | https: `lj listen --cert` serves TLS, `lj dialer --target https://...` speaks it. |
 | **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. `lj remote` is the far side's worker. |
-
-## Encryption
-
-`lj` speaks plain HTTP by default. To encrypt the traffic, give the
-listener a certificate:
-
-```bash
-lj listen --gen-cert ~/.lj      # writes cert.pem and key.pem, then exits
-lj listen --cert ~/.lj/cert.pem # serves https
-```
-
-The banner then prints `https://` URLs, and the other side is told to
-trust that certificate:
-
-```bash
-lj dialer --target https://192.168.0.1:10000 --token lj_... \
-          --ca ~/.lj/cert.pem
-```
-
-`--ca` trusts that one certificate. `--insecure` trusts any certificate
-at all, which removes the point of using https -- it is for testing on a
-network you control, and it says so when it runs.
-
-The certificate is self-signed, so it has to be handed over explicitly;
-there is no CA to ask. `ssl` is in the standard library, so this costs no
-dependency -- only `openssl` on the machine that generates the
-certificate.
+| **v3.0.1** | no https: the traffic is plain HTTP, so run it on a network you control. |
 
 ## A window instead of a terminal
 
@@ -207,9 +180,6 @@ does, with buttons.
 | `--token-file PATH` | where the token lives (default `~/.lj/token`) |
 | `--regen-token` | mint a new token, discarding the old one |
 | `--print-only` | print the banner and exit |
-| `--cert PEM` | serve https with this certificate |
-| `--key PEM` | the private key for `--cert` (default: `key.pem` beside it) |
-| `--gen-cert [DIR]` | generate a self-signed certificate and key (default `~/.lj`) and exit |
 
 ### `lj remote`
 
@@ -218,13 +188,11 @@ and brings the answers back. It runs until you stop it.
 
 | flag | |
 |---|---|
-| `--target [https://]IP[:PORT]` | required; defaults to port `10000` |
+| `--target IP[:PORT]` | required; defaults to port `10000` |
 | `--token TOKEN` | required |
 | `--root DIR` | the tree the browser may touch (default: the current directory) |
 | `--interval SEC` | how often to poll (default `1.0`) |
 | `--timeout SEC` | how long a command may run (default `30`) |
-| `--ca PEM` | trust this certificate (for an https target) |
-| `--insecure` | accept any certificate -- not protected against anyone watching |
 | `--once` | do one poll and exit |
 | `--print-only` | print the banner and exit |
 
@@ -232,7 +200,7 @@ and brings the answers back. It runs until you stop it.
 
 | flag | |
 |---|---|
-| `--target [https://]IP[:PORT]` | required; defaults to port `10000` |
+| `--target IP[:PORT]` | required; defaults to port `10000` |
 | `--token TOKEN` | required |
 | `-m, --message TEXT` | what to send (default: stdin) |
 | `-f, --file PATH` | send a file |
@@ -243,8 +211,6 @@ and brings the answers back. It runs until you stop it.
 | `--once` | with `--listen`, poll once and exit |
 | `-i, --interactive` | two-way REPL (the default when stdin is a terminal and no message was given) |
 | `--poll SEC` | how often the REPL checks for new messages |
-| `--ca PEM` | trust this certificate (for an https target) |
-| `--insecure` | accept any certificate -- not protected against anyone watching |
 
 ## The token
 
@@ -266,13 +232,12 @@ working immediately.
 python -m lj.selftest
 ```
 
-168 checks: token properties, target parsing, the HTTP surface, that a wrong
+158 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's CLI
-handles its failure modes, that https really rejects an untrusted
-certificate, and that no byte-stream/terminal surface has crept in (see
-Scope). The `0600` assertion only runs where POSIX permission bits mean
-something (not on Windows/NTFS).
+handles its failure modes, and that no byte-stream/terminal surface has
+crept in (see Scope). The `0600` assertion only runs where POSIX permission
+bits mean something (not on Windows/NTFS).
 
 The suite leaves nothing running: a normal exit reaps every child, and a
 run that is killed leaves its pids in a file that the next run cleans up.
@@ -361,8 +326,8 @@ GLIBC_2.14, so it runs on 20.04 and everything newer.
 **The token is a shell credential now.** Holding it lets someone read,
 write and delete files on the far side and run commands there, with that
 account's rights. It was a messaging credential before; it is a password
-for that machine now. Use HTTPS, or a network you control, and give the
-far side an account you would be willing to lose.
+for that machine now. The traffic is plain HTTP, so use a network you
+control, and give the far side an account you would be willing to lose.
 
 ## Scope: a file manager and a command runner
 

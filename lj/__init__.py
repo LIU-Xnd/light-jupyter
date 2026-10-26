@@ -13,22 +13,22 @@ with nothing installed:
     python -m lj.listen --help
     python -m lj.dialer --help
 
-SCOPE -- messages only, deliberately
--------------------------------------
-This is a message queue with a web page on it. It is NOT a transport for
-arbitrary byte streams, and it must not grow into one.
+SCOPE -- a file manager and a command runner, deliberately not a terminal
+---------------------------------------------------------------------------
+This is a request/response channel with a web page on it: the browser asks
+the far side to do something, and the whole answer comes back. It is NOT a
+transport for arbitrary byte streams, and it must not grow into one.
 
-Carrying a shell over it would mean re-implementing what ssh already does
-correctly: PTY allocation, windowing and flow control, reconnection
-semantics, and end-to-end encryption. Worse, forwarding raw bytes hands the
-holder of the token a remote command channel, so the token stops being a
-message-passing credential and becomes a shell credential. That is a much
-larger blast radius than the one it replaces.
+There is no PTY here, and there is not going to be one. A real interactive
+terminal needs a PTY, a resize channel, a signal channel and flow control --
+and a browser that emulates one properly is xterm.js, which is a large
+dependency to carry for a tool whose point is being small. Every operation
+here is a request that comes back whole, so a timeout costs one operation
+rather than a session that has to be detected and rebuilt.
 
-Where a shell on a server with no inbound ports is needed, use ssh's own
-mechanism: an sshd on a reachable port here, another sshd on the server
-bound to loopback, and `ssh -N -R <port>:localhost:<sshd>` dialled out from
-the server. Real SSH, real encryption, and nothing to maintain here.
+The traffic is plain HTTP. There is no TLS, and the token in the URL is
+what stands between a stranger and that machine -- so run this on a
+network you control.
 
 Standard library only. `lj.selftest` asserts this scope.
 """
@@ -39,7 +39,7 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "3.0.0"       # fallback when not installed as a distribution
+    __version__ = "3.0.1"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 

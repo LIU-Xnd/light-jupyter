@@ -240,15 +240,10 @@ L = load("lj.listen")
 D = load("lj.dialer")
 
 
-def get(port, path, token=None, timeout=10, tls_ca=None):
+def get(port, path, token=None, timeout=10):
     h = {"X-LJ-Token": token} if token else {}
-    scheme = "https" if tls_ca else "http"
-    req = urllib.request.Request(f"{scheme}://127.0.0.1:{port}{path}", headers=h)
-    ctx = None
-    if tls_ca:
-        import ssl
-        ctx = ssl.create_default_context(cafile=tls_ca)
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=h)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status, r.read().decode("utf-8", "replace")
 
 
@@ -294,16 +289,19 @@ check("regen-token changes it", c != a)
 # ---------------------------------------------------------------- parsing
 
 print("\n=== 2. target parsing ===")
-check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999, "http"))
-check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000, "http"))
-check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080, "http"))
-check("trailing colon", D.split_target("host:") == ("host", 10000, "http"))
-check("https:// is recognised",
-      D.split_target("https://1.2.3.4:9999") == ("1.2.3.4", 9999, "https"))
-check("http:// is recognised",
-      D.split_target("http://1.2.3.4:9999") == ("1.2.3.4", 9999, "http"))
+check("host:port", D.split_target("1.2.3.4:9999") == ("1.2.3.4", 9999))
+check("host only -> 10000", D.split_target("1.2.3.4") == ("1.2.3.4", 10000))
+check("bare port -> localhost", D.split_target("8080") == ("127.0.0.1", 8080))
+check("trailing colon", D.split_target("host:") == ("host", 10000))
+# The scheme is accepted and ignored: there is no encryption, so a
+# target is an address and a port. An old "https://..." target string
+# still parses rather than failing.
+check("https:// is accepted and ignored",
+      D.split_target("https://1.2.3.4:9999") == ("1.2.3.4", 9999))
+check("http:// is accepted and ignored",
+      D.split_target("http://1.2.3.4:9999") == ("1.2.3.4", 9999))
 check("the scheme is case-insensitive",
-      D.split_target("HTTPS://1.2.3.4:9999") == ("1.2.3.4", 9999, "https"))
+      D.split_target("HTTPS://1.2.3.4:9999") == ("1.2.3.4", 9999))
 
 # ---------------------------------------------------------------- server
 
@@ -861,112 +859,7 @@ else:
     check("the fallback __version__ matches the installed distribution",
           _fallback == _installed, f"{_fallback} vs {_installed}")
 
-print("\n=== 6f. https ===")
-# Encryption has to be checked in the direction that matters: a client
-# that does not trust the certificate must be refused, and plain http
-# against a TLS port must fail. If only the happy path is tested, a
-# broken --ca that silently skips verification would still pass.
-_tls_dir = tmp / "tls"
-_r = subprocess.run([PY, "-m", "lj", "listen", "--gen-cert", str(_tls_dir)],
-                    capture_output=True, text=True, errors="replace", timeout=60)
-check("--gen-cert makes a certificate", (_tls_dir / "cert.pem").exists()
-      and (_tls_dir / "key.pem").exists(), _r.stderr[-200:])
-check("--gen-cert says what to do with the certificate",
-      "--ca" in (_r.stdout or ""), (_r.stdout or "")[-160:])
-
-# The certificate has to be valid for the name the OTHER side uses. A
-# cert with only "localhost" in its SAN list fails hostname verification
-# the moment the far machine dials the routable address, and the error
-# ("IP address mismatch") reads like a wrong certificate rather than a
-# missing name. So the certificate must carry the machine's own address.
-try:
-    import ssl as _ssl
-    _der = (_tls_dir / "cert.pem").read_bytes()
-    _pem = _ssl.DER_cert_to_PEM_cert(_der) if False else None
-    _txt = subprocess.run(["openssl", "x509", "-in", str(_tls_dir / "cert.pem"),
-                           "-noout", "-text"],
-                          capture_output=True, text=True, timeout=60).stdout
-    _own = L.local_addr()
-    check("the certificate is valid for this machine's own address",
-          _own and _own in _txt, f"{_own} not in the SAN list")
-    check("the certificate is valid for localhost", "localhost" in _txt)
-except Exception as _e:
-    check("the certificate is valid for this machine's own address",
-          False, type(_e).__name__)
-
-_tls_port = free_port()
-# stdout goes to a FILE, not a pipe: a pipe nobody drains fills up, the
-# child blocks writing to it, and the reap's wait() then blocks forever
-_tls_out = open(tmp / "tls_listener.log", "w", encoding="utf-8")
-_tls = subprocess.Popen(
-    [PY, "-m", "lj", "listen", "--port", str(_tls_port), "--host", "127.0.0.1",
-     "--cert", str(_tls_dir / "cert.pem"), "--key", str(_tls_dir / "key.pem"),
-     "--token-file", str(tmp / "t8")],
-    stdout=_tls_out, stderr=subprocess.STDOUT)
-_remember(_tls)
-# wait for the port to answer rather than sleeping a fixed amount: the
-# listener has to read the cert, start serving and write the token file,
-# and a fixed sleep is a race on a loaded machine
-_deadline = time.time() + 25
-_up = False
-while time.time() < _deadline:
-    if _tls.poll() is not None:
-        break
-    try:
-        import socket as _sock
-        _s = _sock.create_connection(("127.0.0.1", _tls_port), timeout=0.5)
-        _s.close()
-        _up = True
-        break
-    except OSError:
-        time.sleep(0.3)
-check("the TLS listener came up", _up)
-# the token file is written at startup; if it is not there yet, the
-# listener is not ready and reading it would raise
-time.sleep(0.5)
-
-if _up and _tls.poll() is None:
-    _tls_tok = (tmp / "t8").read_text().strip()
-    _ca = str(_tls_dir / "cert.pem")
-
-    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
-                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
-                         "--ca", _ca, "-m", "over tls"],
-                        capture_output=True, text=True, errors="replace", timeout=60)
-    check("a dialer that trusts the certificate can send",
-          _r.returncode == 0 and "204" in (_r.stdout or ""),
-          (_r.stdout or "")[-120:])
-
-    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
-                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
-                         "-m", "should not get through"],
-                        capture_output=True, text=True, errors="replace", timeout=60)
-    check("a dialer that does not trust the certificate is refused",
-          _r.returncode != 0, (_r.stdout or "")[-120:])
-
-    _r = subprocess.run([PY, "-m", "lj", "dialer", "--target",
-                         f"https://127.0.0.1:{_tls_port}", "--token", _tls_tok,
-                         "--insecure", "-m", "insecure path"],
-                        capture_output=True, text=True, errors="replace", timeout=60)
-    check("--insecure gets through", _r.returncode == 0 and "204" in (_r.stdout or ""),
-          (_r.stdout or "")[-120:])
-
-    _got = json.loads(get(_tls_port, "/msg", _tls_tok, tls_ca=_ca)[1])
-    check("the message arrived over TLS",
-          "over tls" in _got.get("msgs", []), str(_got)[:100])
-
-    # plain http against a TLS port must fail
-    try:
-        import urllib.request as _ur
-        _req = _ur.Request(f"http://127.0.0.1:{_tls_port}/msg",
-                            headers={"X-LJ-Token": _tls_tok})
-        with _ur.urlopen(_req, timeout=10) as _rr:
-            _rr.read()
-        check("plain http against a TLS port fails", False, "it succeeded")
-    except Exception:
-        check("plain http against a TLS port fails", True)
-
-print("\n=== 6g. the README matches the code ===")
+print("\n=== 6f. the README matches the code ===")
 # A flag that exists but is not documented is a flag nobody uses; one
 # that is documented but does not exist is worse -- the command fails.
 # The README is shipped inside the package, so an installed copy has it;
@@ -1006,7 +899,7 @@ else:
     check("the README is present", False, "README.md not found")
 
 
-print("\n=== 6h. the GUI ===")
+print("\n=== 6g. the GUI ===")
 # The window is a view over the same server, so the test drives the
 # WIDGETS and the real HTTP endpoints -- not a copy of the logic. A GUI
 # that shows something different from what the page shows is worse than
@@ -1172,7 +1065,7 @@ else:
     for _n in _gui_check_names():
         skip(_n, "no display")
 
-print("\n=== 6h2. the launcher opens the window when there is no console ===")
+print("\n=== 6h. the launcher opens the window when there is no console ===")
 # The Start Menu shortcut runs the GUI launcher with no arguments. The
 # launcher is pythonw-based, so it has no console: printing usage goes
 # nowhere and the process exits, which the user sees as "nothing

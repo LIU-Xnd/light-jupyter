@@ -17,7 +17,6 @@ import http.client
 import os
 import queue
 import socket
-import ssl
 import subprocess
 import sys
 import threading
@@ -62,14 +61,11 @@ class ListenerThread(threading.Thread):
     way a tkinter program crashes at random.
     """
 
-    def __init__(self, host, port, token_file, cert=None, key=None,
-                 events=None):
+    def __init__(self, host, port, token_file, events=None):
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token_file = token_file
-        self.cert = cert
-        self.key = key
         self.events = events if events is not None else queue.Queue()
         self.srv = None
         self.error = None
@@ -83,8 +79,7 @@ class ListenerThread(threading.Thread):
             self.token, note = L.load_or_create_token(self.token_file)
             L.Handler.token = self.token
 
-            srv = L._bind_or_explain(self.host, self.port,
-                                     self.cert, self.key)
+            srv = L._bind_or_explain(self.host, self.port)
             if self._stopping:
                 # stopped while we were binding
                 srv.shutdown()
@@ -103,8 +98,7 @@ class ListenerThread(threading.Thread):
                                  kwargs={"poll_interval": 0.3}, daemon=True)
             t.start()
 
-            if not L._serves_our_page(self.host, self.port,
-                                       tls=bool(self.cert)):
+            if not L._serves_our_page(self.host, self.port):
                 srv.shutdown()
                 srv.server_close()
                 self.error = ("another process is answering on this port")
@@ -205,15 +199,9 @@ class App(tk.Tk):
                      values=("0.0.0.0", "127.0.0.1")).grid(
             row=0, column=3, sticky="w", padx=(4, 12))
 
-        self.tls_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="https (self-signed)",
-                        variable=self.tls_var,
-                        command=self._tls_changed).grid(
-            row=0, column=4, sticky="w")
-
         self.btn = ttk.Button(top, text="Start", command=self._toggle)
-        self.btn.grid(row=0, column=5, sticky="e", padx=(12, 0))
-        top.columnconfigure(5, weight=1)
+        self.btn.grid(row=0, column=4, sticky="e", padx=(12, 0))
+        top.columnconfigure(4, weight=1)
 
         # -- the address to hand over --------------------------------
         share = ttk.LabelFrame(outer, text="Hand this to the sender",
@@ -282,7 +270,6 @@ class App(tk.Tk):
         self.open_btn.configure(state="normal")
         self.send_btn.configure(state="normal")
 
-        scheme = "https" if self.tls_var.get() else "http"
         host = self.host_var.get()
         # The address to put in the URL is the one the browser can
         # actually reach. When the listener is on every interface
@@ -295,7 +282,7 @@ class App(tk.Tk):
         else:
             shown = host
         self.address = f"{shown}:{self.port_var.get()}"
-        self.url_var.set(f"{scheme}://{self.address}/#token={token}")
+        self.url_var.set(f"http://{self.address}/#token={token}")
 
         self._append(f"listening on {host}:{self.port_var.get()}  ({note})")
         self._append("the sender needs that URL and the token")
@@ -356,18 +343,6 @@ class App(tk.Tk):
                 return
             self._wait_port_free()
 
-        cert = key = None
-        if self.tls_var.get():
-            cert = os.path.join(os.path.expanduser("~"), ".lj", "cert.pem")
-            key = os.path.join(os.path.expanduser("~"), ".lj", "key.pem")
-            if not os.path.exists(cert):
-                try:
-                    cert, key = L.generate_self_signed(
-                        os.path.dirname(cert))
-                except SystemExit as e:
-                    messagebox.showerror(APP_TITLE, str(e))
-                    return
-
         self._append(f"starting on {self.host_var.get()}:{port} ...")
         # The button is NOT disabled while starting. Disabling it here
         # and re-enabling it from the worker's "started" event loses the
@@ -380,7 +355,7 @@ class App(tk.Tk):
         # clicking Stop while the listener is still starting stops it.
         self._set_button("Stop")
         self.worker = ListenerThread(self.host_var.get(), port,
-                                     L.TOKEN_FILE, cert, key, self.events)
+                                     L.TOKEN_FILE, self.events)
         self.worker.start()
 
     def _stop(self):
@@ -438,9 +413,8 @@ class App(tk.Tk):
         L.Handler.token = token
         self._append(f"new token: {token}  (the old URL stops working)")
         if self.worker and self.worker.is_alive():
-            scheme = "https" if self.tls_var.get() else "http"
             self.url_var.set(
-                f"{scheme}://{self.address}/#token={token}")
+                f"http://{self.address}/#token={token}")
 
     def _copy_url(self):
         self.clipboard_clear()
@@ -505,11 +479,6 @@ class App(tk.Tk):
         # instead, so the newest line is actually on screen.
         self.log.see("end-1c")
         self.log.configure(state="disabled")
-
-    def _tls_changed(self):
-        if self.worker and self.worker.is_alive():
-            self._append("https cannot be turned on or off while running")
-            self.tls_var.set(not self.tls_var.get())
 
     def _on_close(self):
         if self.worker:
