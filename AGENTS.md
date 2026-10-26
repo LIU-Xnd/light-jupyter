@@ -240,33 +240,41 @@ redirection. The process is run directly.
 anywhere in the agent. Do not widen it without changing that decision on
 purpose.
 
-## The far side is ONE command
+## The far side is ONE command and it is the worker
 
-`lj dialer` is the far side, and it has two modes:
+`lj dialer` is the far side: it polls for work, does it, and brings the
+answers back. That is all it does.
 
-- `--worker` -- poll for work, do it, bring the answers back. This is
-  the daemon the browser drives.
-- no flag -- push a message, or collect what the page sends.
+It used to have two modes. There was a `--worker` flag, and without it
+the command was a messenger -- push a message, or collect what the page
+sends. The messenger is GONE, and so are the flags that drove it: `-m`,
+`-f`, `--repeat`, `--listen`, `--show`, `--interactive`, `--poll`.
 
-They were two commands (`lj dialer` and `lj remote`) until v4.0.0.
-They had the same arguments, the same target format, the same token
-handling and the same "dial out, never accept" shape, so two commands
-meant two parsers, two sets of flags, two help texts, and a user who
-had to know which half of the far side they were running.
+**Do not bring any of it back.** One command that does one thing is
+easier to reason about than one command that does two things depending
+on a flag, and the messenger was the half nobody used.
 
-**Do not split them back into two commands.** The mode is a flag, and
-the flag is the thing that was already different. The messenger is the
-default, so the common one-liner keeps working.
+Three things follow from the removal and are easy to get wrong:
 
-Two things follow from the merge and are easy to get wrong:
+- **The endpoints that carried messages are gone: `/msg`, `/in` and
+  `/send`.** They 404 now. The suite asserts that they 404 -- not
+  that they are untested -- because a quiet success would let a stale
+  client think it still works.
+- **The page has no chat drawer, and the window has no send box.**
+  The suite asserts the elements are ABSENT, for the same reason.
+- **The flags must not come back quietly.** The suite reads the
+  dialer's own help text and asserts that `--worker`, `-m`, `--message`,
+  `--file`, `--repeat`, `--listen`, `--show` and `--interactive` are
+  not in it.
 
-- **A shared flag cannot have one default for both modes.** `--interval`
-  meant "seconds between repeats" (5s) for a message and "seconds
-  between polls" (1s) for a worker; `--timeout` meant 10s and 15s. The
-  default is now chosen by the mode at run time, not by the parser.
-- **`lj remote` must not quietly still work.** The suite asserts that
-  the dispatcher answers "unknown command" for it, because a second
-  name for the same thing is the thing the merge removed.
+There was a `--worker` flag until v5.0.0 and a `lj remote` command until
+v4.0.0. They had the same arguments, the same target format, the same
+token handling and the same "dial out, never accept" shape, so two
+commands meant two parsers, two sets of flags, two help texts, and a
+user who had to know which half of the far side they were running.
+
+**`lj remote` must not quietly still work either.** The suite asserts
+that the dispatcher answers "unknown command" for it.
 
 ## The token is a shell credential
 

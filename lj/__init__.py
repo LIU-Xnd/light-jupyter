@@ -1,11 +1,13 @@
-"""lj -- a minimal, egress-only message channel.
+"""lj -- a file manager and a command runner, for a machine you cannot reach.
 
 One side holds the port, the other dials out to it. No inbound port is needed
 on the machine that cannot be reached.
 
-    lj listen                      # holds :10000, mints a token
-    lj dialer --worker IP:PORT     # the far side's worker
-    lj dialer IP:PORT -m 'hello'   # or just a message
+    lj listen                  # holds :10000, mints a token
+    lj dialer IP:PORT          # the far side: poll for work and do it
+
+The browser drives the far side: it lists, reads, edits, moves, copies and
+deletes files there, and runs commands there.
 
 Both subcommands are also runnable as modules, which is useful from a clone
 with nothing installed:
@@ -39,19 +41,19 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("lj")
 except Exception:
-    __version__ = "4.0.0"       # fallback when not installed as a distribution
+    __version__ = "5.0.0"       # fallback when not installed as a distribution
 
 __all__ = ["__version__", "main"]
 
 USAGE = """\
-lj {version} -- an egress-only message channel
+lj {version} -- a file manager and a command runner, for a machine you
+cannot reach
 
 usage: lj <command> [options]
 
 commands:
   listen     hold the port the far side dials; serves the page
-  dialer     the far side: push a message out to that port, or --worker,
-             do whatever the browser asks for (files and commands)
+  dialer     the far side: poll for work, do it, bring the answers back
   gui        the listener in a window, with buttons
 
 run 'lj <command> --help' for a command's own options.
@@ -59,7 +61,7 @@ run 'lj <command> --help' for a command's own options.
 A session is two processes, one on each machine:
 
   machine with the browser          machine that cannot be reached
-    lj listen                        lj dialer --worker <that-ip>:<port>
+    lj listen                        lj dialer <that-ip>:<port>
     (open the URL it prints)         (the browser can now browse its files
                                      and run commands there)
 

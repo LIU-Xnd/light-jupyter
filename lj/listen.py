@@ -1,16 +1,16 @@
 """lj.listen -- the listening side, on the machine that runs the browser.
 
 The server cannot be reached directly (no inbound port), so THIS process
-holds the port instead. It serves the page the browser asks for and accepts
-messages pushed to it from the far side.
+holds the port instead. It serves the page the browser asks for, and
+hands out the work the far side comes to collect.
 
     python -m lj.listen                  # 0.0.0.0:10000, fresh token
     python -m lj.listen --port 10000
     python -m lj.listen --regen-token   # new token, invalidating the old URL
 
-It prints a one-liner to hand to the sender:
+It prints a one-liner to hand to the far side:
 
-    python -m lj.dialer --target <ip>:<port> --token <token>
+    lj dialer <ip>:<port>/#token=<token>
 
 SCOPE -- a file manager and a command runner
 ---------------------------------------------
@@ -45,7 +45,6 @@ import argparse
 import hmac
 import json
 import os
-import queue
 import secrets
 import signal
 import threading
@@ -72,25 +71,6 @@ MAX_BODY = 8 * 1024 * 1024
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 TOKEN_BYTES = 32                      # 256 bits
 TOKEN_PREFIX = "lj_"
-
-# Two queues, opposite directions. INBOUND is what the far side pushed to
-# us; OUTBOUND is what the browser wants the far side to pick up. They are
-# separate on purpose: a message the browser sends must not be echoed back
-# to it as if it had arrived from the server.
-INBOUND = queue.Queue(maxsize=1000)
-OUTBOUND = queue.Queue(maxsize=1000)
-
-
-def _drain(q: queue.Queue, limit: int = 500) -> list:
-    """Take everything queued, up to `limit`, without blocking."""
-    out = []
-    while len(out) < limit:
-        try:
-            out.append(q.get_nowait())
-        except queue.Empty:
-            break
-    return out
-
 
 def log(msg: str = "") -> None:
     print(msg, flush=True)
@@ -193,22 +173,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._send(PAGE.encode("utf-8"), "text/html; charset=utf-8")
             return
-        if path == "/msg":
-            if not self._token_ok():
-                self._send(b'{"error":"bad token"}', "application/json", 401)
-                return
-            # what the far side pushed to us, for the page to render
-            self._send(json.dumps({"msgs": _drain(INBOUND)}).encode("utf-8"),
-                       "application/json")
-            return
-        if path == "/send":
-            if not self._token_ok():
-                self._send(b'{"error":"bad token"}', "application/json", 401)
-                return
-            # what the page typed, for the far side to collect
-            self._send(json.dumps({"msgs": _drain(OUTBOUND)}).encode("utf-8"),
-                       "application/json")
-            return
         if path == "/cmd":
             # the far side collecting the work the browser asked for
             if not self._token_ok():
@@ -237,13 +201,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
-        # POST /msg is the browser sending out; POST /in is the far side
-        # sending in. They cannot share an endpoint: one direction per path.
-        if path == "/msg":
-            target, source = OUTBOUND, "page"
-        elif path == "/in":
-            target, source = INBOUND, "far "
-        elif path == "/cmd":
+        if path == "/cmd":
             # the browser asking for something to be done
             if not self._token_ok():
                 self._send(b'{"error":"bad token"}', "application/json", 401)
@@ -269,23 +227,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         else:
             self._send(b"not found", "text/plain", 404)
-            return
-        if not self._token_ok():
-            self._send(b'{"error":"bad token"}', "application/json", 401)
-            return
-        try:
-            n = int(self.headers.get("Content-Length", 0))
-        except ValueError:
-            n = 0
-        raw = self.rfile.read(n) if n > 0 else b""
-        text = raw.decode("utf-8", "replace")
-        try:
-            target.put_nowait(text)
-        except queue.Full:
-            self._send(b'{"error":"queue full"}', "application/json", 507)
-            return
-        log(f"  {source} ->  {len(raw):>6} chars  {text[:60]!r}")
-        self._send(b"", "text/plain", 204)
 
     def log_message(self, *_a) -> None:
         pass                      # log what matters, not every poll
@@ -435,7 +376,7 @@ def main(argv=None) -> int:
     me = local_addr()
     banner = [
         "",
-        "  lj.listen  (light_jupyter 4.0.0)",
+        "  lj.listen  (light_jupyter 5.0.0)",
         f"    listening : {args.host}:{args.port}",
         f"    reachable : {me}:{args.port}",
         f"    token     : {token}",
@@ -453,13 +394,13 @@ def main(argv=None) -> int:
         # one to print.)
         f"  browser : http://{me}:{args.port}/#token={token}",
         "",
-        "  hand this to the sending side:",
+        "  hand this to the far side:",
         "",
         # The token is IN the target now, so the far side needs nothing
         # added to it -- the line is copy-pasteable as it stands. A
         # separate --token is a thing to mistype, and a mistyped token
         # reads as "the two sides disagree" rather than as a typo.
-        f"    lj dialer --worker {me}:{args.port}/#token={token}",
+        f"    lj dialer {me}:{args.port}/#token={token}",
         "",
     ]
     if args.print_only:

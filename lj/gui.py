@@ -1,19 +1,18 @@
 """A window around the lj listener.
 
 The listener already does everything: it holds the port, serves the page,
-carries messages both ways and prints a banner. This is the same server
-with a face -- a start/stop button, the address to hand to the far side,
-the log, and a box to type into.
+hands out the work and prints a banner. This is the same server with a
+face -- a start/stop button, the address to hand to the far side, and the
+log.
 
-It is a VIEW, not a second implementation. The HTTP server, the token
-handling and the message queues are lj.listen's, imported and driven
-here. If the two ever disagreed about what a request means, the page and
-the window would show different things -- so there is only one copy.
+It is a VIEW, not a second implementation. The HTTP server and the token
+handling are lj.listen's, imported and driven here. If the two ever
+disagreed about what a request means, the page and the window would show
+different things -- so there is only one copy.
 
 Nothing here is required to use lj: the command line still works, and
 this file is not imported by it.
 """
-import http.client
 import os
 import queue
 import socket
@@ -48,7 +47,6 @@ except ImportError:                      # running from a source tree
     import lj.listen as L
 
 APP_TITLE = "lj listener"
-POLL_MS = 700                    # how often the window checks for new traffic
 
 
 class ListenerThread(threading.Thread):
@@ -168,11 +166,9 @@ class App(tk.Tk):
         self.worker = None
         self.token = ""
         self.address = ""
-        self._sent = []            # what this window sent, to skip the echo
 
         self._build()
         self.after(120, self._drain)
-        self.after(POLL_MS, self._poll)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------ layout
@@ -257,18 +253,6 @@ class App(tk.Tk):
         self.log.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
-        # -- send a message to the far side --------------------------
-        out = ttk.LabelFrame(outer, text="Send to the far side", padding=8)
-        out.pack(fill="x", pady=(pad, 0))
-
-        self.msg_var = tk.StringVar()
-        entry = ttk.Entry(out, textvariable=self.msg_var)
-        entry.pack(side="left", fill="x", expand=True)
-        entry.bind("<Return>", lambda _e: self._send())
-        self.send_btn = ttk.Button(out, text="Send", command=self._send,
-                                   state="disabled")
-        self.send_btn.pack(side="left", padx=(6, 0))
-
     # ------------------------------------------------------------ events
 
     def _drain(self):
@@ -291,7 +275,6 @@ class App(tk.Tk):
         self._set_button("Stop")
         self.copy_btn.configure(state="normal")
         self.open_btn.configure(state="normal")
-        self.send_btn.configure(state="normal")
 
         host = self.host_var.get()
         # The address to put in the URL is the one the browser can
@@ -314,7 +297,6 @@ class App(tk.Tk):
         self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
-        self.send_btn.configure(state="disabled")
         self.url_var.set("not running")
         self._append(f"FAILED: {why}")
         messagebox.showerror(APP_TITLE, why)
@@ -399,7 +381,6 @@ class App(tk.Tk):
         self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
-        self.send_btn.configure(state="disabled")
         self.url_var.set("not running")
         # Say what happened. Without this the log stops at "stopping ..."
         # and the user cannot tell a finished stop from a hung one.
@@ -454,52 +435,6 @@ class App(tk.Tk):
 
     def _open_page(self):
         webbrowser.open(self.url_var.get())
-
-    def _send(self):
-        text = self.msg_var.get()
-        if not text:
-            return
-        if not (self.worker and self.worker.is_alive()):
-            return
-        # the same endpoint the browser uses, so the far side sees both
-        # in the same order
-        try:
-            conn = http.client.HTTPConnection(
-                "127.0.0.1", int(self.port_var.get()), timeout=5)
-            conn.request("POST", "/msg", body=text.encode("utf-8"),
-                         headers={"X-LJ-Token": self.token,
-                                  "Content-Type": "text/plain; charset=utf-8"})
-            conn.getresponse().read()
-            conn.close()
-        except Exception as e:                       # noqa: BLE001
-            self._append(f"send failed: {e}")
-            return
-        self.msg_var.set("")
-        # Remember it: the window posts to /msg, and the poll reads
-        # /send -- the same queue -- so without this the window would
-        # show its own message coming back in.
-        self._sent.append(text)
-        self._append(f"-> {text}")
-
-    def _poll(self):
-        """Show what arrived, the way the page would."""
-        if self.worker and self.worker.is_alive() and self.token:
-            try:
-                conn = http.client.HTTPConnection(
-                    "127.0.0.1", int(self.port_var.get()), timeout=3)
-                conn.request("GET", "/send",
-                             headers={"X-LJ-Token": self.token})
-                body = conn.getresponse().read().decode("utf-8", "replace")
-                conn.close()
-                import json
-                for m in json.loads(body).get("msgs", []):
-                    if m in self._sent:
-                        self._sent.remove(m)   # our own echo, not news
-                        continue
-                    self._append(f"<- {m}")
-            except Exception:
-                pass                       # the port is busy; try again
-        self.after(POLL_MS, self._poll)
 
     def _append(self, line):
         self.log.configure(state="normal")

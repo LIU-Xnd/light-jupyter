@@ -41,16 +41,16 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 4.0.0)
+  lj listen  (light_jupyter 5.0.0)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
 
   browser : http://192.168.77.160:10000/#token=lj_FE3FQK8Z...
 
-  hand this to the sending side:
+  hand this to the far side:
 
-    lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+    lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 
   ctrl-c to stop
 ```
@@ -67,22 +67,20 @@ person pastes into a browser that is somewhere else.
 **On the machine that cannot be reached** - it dials out:
 
 ```bash
-lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 ```
 
-That is the whole setup. The worker polls the listener, and the browser
-can now browse that machine's files and run commands on it. It runs until
-you stop it.
+That is the whole setup. It polls the listener, does what the browser
+asks, and brings the answers back. It runs until you stop it.
 
-`--worker` makes it the daemon the browser drives. Without it, `lj
-dialer` is a messenger -- one command, two jobs, and the flag is the
-thing that was already different.
+`lj dialer` IS the worker. There is no `--worker` flag and no other
+mode: one command that does one thing.
 
 **The line the listener prints is what you hand over.** It carries the
 token, so nothing has to be added to it:
 
 ```
-    lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+    lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 ```
 
 The token is in the fragment because that is where the browser's URL
@@ -90,8 +88,8 @@ puts it, and a fragment is never sent to the server. The far side reads
 it out of the target, so `--token` is not needed:
 
 ```bash
-lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...  # the token comes along
-lj dialer --worker --target 192.168.77.160:10000 --token lj_...  # the same, spelled out
+lj dialer 192.168.77.160:10000/#token=lj_FE3FQK8Z...  # the token comes along
+lj dialer --target 192.168.77.160:10000 --token lj_...  # the same, spelled out
 ```
 
 The target may also be given as a positional argument. With no target at
@@ -102,29 +100,10 @@ The far side works inside a root, so a stray path cannot walk the whole
 filesystem:
 
 ```bash
-lj dialer --worker ... --root /srv/project
+lj dialer ... --root /srv/project
 ```
 
 `--root` defaults to the current directory.
-
-**Messages still work too**, for the cases where a queue is what you want.
-`lj dialer` is unchanged:
-
-```bash
-lj dialer --target 192.168.77.160:10000 --token lj_FE3FQK8Z... -m "hello"
-echo "from a pipe" | lj dialer --target ... --token ...
-```
-
-```
-  [13:50:55] 1/3 -> 204 in 0.01s
-  [13:50:56] 2/3 -> 204 in 0.01s
-  [13:50:57] 3/3 -> 204 in 0.00s
-```
-
-With no `-m` and a terminal it becomes a two-way REPL: type to send, and
-what the page types appears as it arrives. `/help`, `/send TEXT`, `/quit`
-and ctrl-d. Piped input stays a one-shot send, so scripts never hang in a
-prompt.
 
 ## Versions
 
@@ -143,14 +122,15 @@ prompt.
 | **v3.1.0** | the target carries the token and may be positional: `lj remote HOST:PORT/#token=lj_...`. |
 | **v3.1.1** | closing the GUI window takes the server down with it, and waits for the port to be free. |
 | **v4.0.0** | `lj remote` and `lj dialer` are one command: `lj dialer --worker` is the far side's worker, and without it `lj dialer` is the messenger. |
+| **v5.0.0** | the messenger is gone. `lj dialer` is the worker -- there is no `--worker` flag, no `-m`, no REPL, and the `/msg`, `/in` and `/send` endpoints are gone too. One command, one job. |
 
 ## A window instead of a terminal
 
 `lj gui` opens the listener as a window: a start button, the address to
-hand to the sender, a log, and a box to type into. It is a view over the
-same server -- the HTTP handling, the token and the queues are
-`lj.listen`'s, imported and driven, not reimplemented. The command line
-still works and nothing here is required to use `lj`.
+hand to the far side, and a log. It is a view over the same server --
+the HTTP handling and the token are `lj.listen`'s, imported and driven,
+not reimplemented. The command line still works and nothing here is
+required to use `lj`.
 
 **Closing the window takes the server down with it.** The listener is a
 thread in the window's own process, so the port would go when the
@@ -169,24 +149,17 @@ lj gui
 
 One path per direction — an endpoint cannot mean both:
 
-**messages**
-
 | method | path | who | meaning |
 |---|---|---|---|
 | `GET` | `/` | anyone | the page |
-| `POST` | `/in` | far side | push a message to the page |
-| `GET` | `/msg` | page | take the messages that arrived |
-| `POST` | `/msg` | page | send a message to the far side |
-| `GET` | `/send` | far side | take what the browser typed |
-
-**files and commands**
-
-| method | path | who | meaning |
-|---|---|---|---|
 | `POST` | `/cmd` | page | ask the far side to do something |
 | `GET` | `/cmd` | far side | take the work that was asked for |
 | `POST` | `/res` | far side | bring the answer back |
 | `GET` | `/res` | page | take the answers that came back |
+
+The endpoints that carried messages — `/msg`, `/in` and `/send` — are
+gone. They 404, and the self-test asserts that, so they cannot come
+back quietly.
 
 Every data endpoint requires the token (`X-LJ-Token` header, or the
 `lj_token` cookie for the page).
@@ -218,34 +191,18 @@ does, with buttons.
 
 ### `lj dialer`
 
-The far side. One command, two jobs:
-
-- **as the worker** (`--worker`): poll the listener, do what the browser
-  asks, bring the answers back. It runs until you stop it.
-- **as a messenger** (the default): push a message, or collect what the
-  page sends.
-
-They were two commands once (`lj dialer` and `lj remote`), and they had
-the same arguments, the same target format, the same token handling and
-the same "dial out, never accept" shape. The flag is the thing that was
-already different.
+The far side. It polls the listener, does what the browser asks, and
+brings the answers back. It runs until you stop it.
 
 | flag | |
 |---|---|
 | `TARGET` | where the listener is; the same thing as `--target` |
 | `--target IP[:PORT]` | where the listener is; may carry the token as a fragment |
 | `--token TOKEN` | the token; not needed when the target carries it |
-| `--worker` | be the far side's worker: poll for work, do it, bring the answers back |
-| `--root DIR` | the tree the browser may touch; implies `--worker` (default: the home directory) |
-| `-m, --message TEXT` | what to send (default: stdin) |
-| `-f, --file PATH` | send a file |
-| `--repeat N`, `--interval SEC` | send repeatedly (default: every `5`s) |
-| `--timeout SEC` | per-request timeout (default: `10` for a message, `15` for a worker) |
-| `--show` | read what the browser queued after sending |
-| `--listen` | receive what the browser sends instead of sending |
-| `--once` | with `--listen`, poll once and exit; with `--worker`, do one poll and exit |
-| `-i, --interactive` | two-way REPL (the default when stdin is a terminal and no message was given) |
-| `--poll SEC` | how often the REPL checks for new messages |
+| `--root DIR` | the tree the browser may touch (default: the home directory) |
+| `--interval SEC` | seconds between polls (default: `1`) |
+| `--timeout SEC` | per-request timeout (default: `15`) |
+| `--once` | do one poll and exit |
 | `--print-only` | print the banner and exit |
 
 ## The token
@@ -268,12 +225,12 @@ working immediately.
 python -m lj.selftest
 ```
 
-192 checks: token properties, target parsing, the HTTP surface, that a wrong
-token is rejected on every path, that the two directions do not bleed into
-each other, that the page can authenticate and send, that the dialer's and
-the worker's CLIs handle their failure modes, and that no byte-stream/
-terminal surface has crept in (see Scope). The `0600` assertion only runs
-where POSIX permission bits mean something (not on Windows/NTFS).
+196 checks: token properties, target parsing, the HTTP surface, that a wrong
+token is rejected on every path, that the message endpoints are gone, that
+the page can authenticate, that the dialer's CLI handles its failure modes,
+and that no byte-stream/terminal surface has crept in (see Scope). The
+`0600` assertion only runs where POSIX permission bits mean something
+(not on Windows/NTFS).
 
 The suite leaves nothing running: a normal exit reaps every child, and a
 run that is killed leaves its pids in a file that the next run cleans up.
@@ -336,13 +293,12 @@ python tools/build_linux_binary.py   # -> dist/linux/lj
 ```
 
 ```bash
-./lj dialer --worker <ip>:<port>/#token=<token> --root ~/project
-./lj dialer --target <ip>:<port> --token <token> -m 'hello'
+./lj dialer <ip>:<port>/#token=<token> --root ~/project
 ```
 
-The worker is the half that matters: it is the one that runs on the box
+The dialer is the half that matters: it is the one that runs on the box
 that cannot be reached, and it is the one that has to carry its own
-interpreter. The message dialer is in the same binary.
+interpreter.
 
 It has to be built on Linux, and on the machine it will run on or an
 older one: the binary links against the glibc of the system that built
@@ -352,8 +308,8 @@ GLIBC_2.14, so it runs on 20.04 and everything newer.
 ## Security
 
 - 256-bit token compared in constant time, stored `0600`
-- a wrong token is rejected on every path (`GET /msg`, `POST /msg`,
-  `POST /cmd`, `GET /cmd`, `POST /res`, `GET /res`)
+- a wrong token is rejected on every path (`POST /cmd`, `GET /cmd`,
+  `POST /res`, `GET /res`)
 - the page itself is unauthenticated (a static shell); all data requires
   the token
 - the far side's operations are confined to `--root`: a path that escapes
@@ -396,11 +352,7 @@ anywhere in the agent.
 
 ## Limitations
 
-- messages are queued in memory and dropped on restart; nothing is
-  persisted and there is no history on reload
-- one shared token, so anything holding it can both send and receive
-- no delivery guarantee: a message queued while nobody is polling waits
-  until someone reads it
+- one shared token, so anything holding it can drive the far side
 - the terminal is not interactive: no prompt, no pipes, no redirection, no
   Ctrl-C, and a command that waits for input will sit until the timeout
 - a file is edited as text; binary files can be listed, copied and

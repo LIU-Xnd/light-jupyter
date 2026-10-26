@@ -400,44 +400,48 @@ with open(tmp / "t2") as fh:
 
 status, html = get(PORT, "/")
 check("GET / -> 200", status == 200, str(status))
-check("page polls /msg", "fetch('msg'" in html, html[:160])
 check("the page polls the results", "fetch('res" in html, html[:160])
+check("the page does not poll the message queue", "fetch('msg'" not in html,
+      "the chat is back")
 check("page is self-contained", "script" in html and "src=" not in html)
 
-status, body = post(PORT, "/in", "hello from the far side", TOK)
-check("POST /in with the right token -> 204", status == 204, str(status))
-
-status, body = get(PORT, "/msg", TOK)
-data = json.loads(body)
-check("GET /msg returns what came in",
-      data["msgs"] == ["hello from the far side"], body[:200])
-
-status, body = get(PORT, "/msg", TOK)
-check("queue is drained after one read", json.loads(body)["msgs"] == [], body[:80])
+# The message endpoints are GONE. They are not to be brought back, so
+# the test asserts they 404 rather than just not testing them.
+for _path in ("/msg", "/in", "/send"):
+    try:
+        get(PORT, _path, TOK)
+        check(f"GET {_path} is gone", False, "it still answers")
+    except urllib.error.HTTPError as e:
+        check(f"GET {_path} is gone", e.code == 404, str(e.code))
+    try:
+        post(PORT, _path, "should not land", TOK)
+        check(f"POST {_path} is gone", False, "it still accepts")
+    except urllib.error.HTTPError as e:
+        check(f"POST {_path} is gone", e.code == 404, str(e.code))
 
 # ---------------------------------------------------------------- auth
 
 print("\n=== 4. the token is actually enforced ===")
 try:
-    get(PORT, "/msg", "lj_wrong_token_wrong_token_wrong_token_wrong")
+    get(PORT, "/cmd", "lj_wrong_token_wrong_token_wrong_token_wrong")
     check("wrong token is rejected", False, "it was accepted")
 except urllib.error.HTTPError as e:
     check("wrong token is rejected", e.code == 401, str(e.code))
 
 try:
-    get(PORT, "/msg")
+    get(PORT, "/cmd")
     check("no token is rejected", False, "it was accepted")
 except urllib.error.HTTPError as e:
     check("no token is rejected", e.code == 401, str(e.code))
 
 try:
-    post(PORT, "/msg", "should not land", "lj_wrong")
+    post(PORT, "/cmd", json.dumps({"op": "ls", "args": {}}), "lj_wrong")
     check("wrong token cannot post", False, "it was accepted")
 except urllib.error.HTTPError as e:
     check("wrong token cannot post", e.code == 401, str(e.code))
 
 # the cookie path is what a browser uses
-req = urllib.request.Request(f"http://127.0.0.1:{PORT}/msg",
+req = urllib.request.Request(f"http://127.0.0.1:{PORT}/cmd",
                              headers={"Cookie": f"lj_token={TOK}"})
 with urllib.request.urlopen(req, timeout=10) as r:
     check("cookie token works (browser path)", r.status == 200)
@@ -462,15 +466,14 @@ while time.time() < deadline:
 with open(tmp / "t3") as fh:
     TOK2 = fh.read().strip()
 
+# The far side is a worker, so the checks here are about the TARGET
+# and the TOKEN, not about messages.
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", TOK2,
-                    "-m", "from the dialer"], capture_output=True, text=True, errors="replace",
+                    "--once"], capture_output=True, text=True, errors="replace",
                    timeout=30)
 check("dialer exits 0", r.returncode == 0, r.stdout[-200:] + r.stderr[-200:])
-check("dialer reports 204", "204" in r.stdout, r.stdout[-200:])
-
-status, body = get(PORT2, "/msg", TOK2)
-check("message arrived", json.loads(body)["msgs"] == ["from the dialer"], body[:120])
+check("dialer says what it is polling", "127.0.0.1" in r.stdout, r.stdout[-200:])
 
 # The target can be positional, and the token can ride in its
 # fragment. The listener's banner prints ONE line with the token in
@@ -478,16 +481,13 @@ check("message arrived", json.loads(body)["msgs"] == ["from the dialer"], body[:
 # far side has to be able to take it as it stands.
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     f"127.0.0.1:{PORT2}/#token={TOK2}",
-                    "-m", "from the fragment"],
+                    "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("the target can be positional, with the token in its fragment",
-      r.returncode == 0 and "204" in r.stdout, r.stdout[-200:] + r.stderr[-200:])
-check("the message from the fragment arrived",
-      json.loads(get(PORT2, "/msg", TOK2)[1])["msgs"] == ["from the fragment"],
-      get(PORT2, "/msg", TOK2)[1][:120])
+      r.returncode == 0, r.stdout[-200:] + r.stderr[-200:])
 
 r = subprocess.run([PY, "-m", "lj", "dialer",
-                    f"127.0.0.1:{PORT2}", "-m", "no token at all"],
+                    f"127.0.0.1:{PORT2}", "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("a target with no token is refused", r.returncode == 2, str(r.returncode))
 check("it says how to give the token", "--token" in (r.stdout + r.stderr),
@@ -501,7 +501,7 @@ check("no target at all is not a success", r.returncode != 0, str(r.returncode))
 
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "127.0.0.1:1", "--target", f"127.0.0.1:{PORT2}",
-                    "--token", TOK2, "-m", "x"],
+                    "--token", TOK2, "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("two different targets are refused",
       r.returncode == 2 and "two different targets" in r.stdout,
@@ -509,35 +509,31 @@ check("two different targets are refused",
 
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{PORT2}", "--token", "lj_bad",
-                    "-m", "nope"], capture_output=True, text=True, errors="replace", timeout=30)
+                    "--once"], capture_output=True, text=True, errors="replace", timeout=30)
 check("dialer with a bad token fails", r.returncode == 1, str(r.returncode))
 check("dialer says the token was rejected",
       "token rejected" in r.stdout, r.stdout[-160:])
 
+# A worker does not EXIT when the far side is not there -- it says
+# so and tries again, because the far side may come back. That is the
+# whole point of a worker: it is a daemon, and a daemon that gives
+# up is not one.
 dead = free_port()
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     "--target", f"127.0.0.1:{dead}", "--token", TOK2,
-                    "-m", "x"], capture_output=True, text=True, errors="replace", timeout=30)
-check("dialer to a dead port fails cleanly", r.returncode == 1)
+                    "--once"], capture_output=True, text=True, errors="replace", timeout=30)
+check("dialer to a dead port does not crash", r.returncode in (0, 1),
+      str(r.returncode))
 check("dialer explains it cannot connect",
       "cannot reach" in r.stdout, r.stdout[-160:])
 
-# stdin
-r = subprocess.run([PY, "-m", "lj", "dialer",
-                    "--target", f"127.0.0.1:{PORT2}", "--token", TOK2],
-                   input="piped text\n", capture_output=True, text=True, errors="replace",
-                   timeout=30)
-status, body = get(PORT2, "/msg", TOK2)
-check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:120])
-
 # -------------------------------------------------------- the worker mode
 
-# The far side is ONE command now: lj dialer. --worker makes it the
-# daemon the browser drives; without it, it is the messenger. Both take
-# the same target shapes: positional, or --target, and the token in
-# the fragment. The banner's line for the far side is one of those
-# shapes, so it has to work.
-r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
+# The far side is ONE command and it IS the worker: lj dialer. There is
+# no --worker flag and no other mode. It takes the same target shapes
+# the banner's line for the far side uses: positional, or --target, and
+# the token in the fragment.
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     f"127.0.0.1:{PORT2}/#token={TOK2}",
                     "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
@@ -545,39 +541,29 @@ check("the worker takes a positional target with the token in its fragment",
       r.returncode == 0, (r.stdout + r.stderr)[-200:])
 check("the worker says what it is listening to",
       f"127.0.0.1:{PORT2}" in r.stdout, r.stdout[-200:])
-check("the worker says it is the far side's worker",
-      "worker" in r.stdout, r.stdout[-200:])
+check("the worker says what it is",
+      "lj dialer" in r.stdout and "far side" in r.stdout, r.stdout[-200:])
 
-# --root implies --worker: naming the tree the browser may touch is
-# only meaningful in the worker mode.
+# --root names the tree the browser may touch.
 r = subprocess.run([PY, "-m", "lj", "dialer",
                     f"127.0.0.1:{PORT2}/#token={TOK2}",
                     "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
-check("--root implies --worker", r.returncode == 0 and "worker" in r.stdout,
-      (r.stdout + r.stderr)[-200:])
+check("--root is accepted", r.returncode == 0, (r.stdout + r.stderr)[-200:])
+check("the worker says which tree it serves", str(tmp) in r.stdout,
+      r.stdout[-200:])
 
-# and the message mode is still the default
 r = subprocess.run([PY, "-m", "lj", "dialer",
-                    f"127.0.0.1:{PORT2}/#token={TOK2}", "-m", "still a messenger"],
-                   capture_output=True, text=True, errors="replace", timeout=30)
-check("without --worker it is still the messenger",
-      r.returncode == 0 and "204" in r.stdout, (r.stdout + r.stderr)[-200:])
-check("the message from the messenger arrived",
-      "still a messenger" in json.loads(get(PORT2, "/msg", TOK2)[1]).get("msgs", []),
-      get(PORT2, "/msg", TOK2)[1][:120])
-
-r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
                     f"127.0.0.1:{PORT2}", "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("the worker with no token is refused", r.returncode == 2, str(r.returncode))
 
-r = subprocess.run([PY, "-m", "lj", "dialer", "--worker"],
+r = subprocess.run([PY, "-m", "lj", "dialer"],
                    capture_output=True, text=True, errors="replace", timeout=30)
 check("the worker with no target prints the usage", "usage:" in r.stdout,
       r.stdout[-160:])
 
-r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
+r = subprocess.run([PY, "-m", "lj", "dialer",
                     "127.0.0.1:1", "--target", f"127.0.0.1:{PORT2}",
                     "--token", TOK2, "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
@@ -757,54 +743,50 @@ while time.time() < deadline:
 with open(tmp / "t4") as fh:
     TOK3 = fh.read().strip()
 
-# far side -> us
-post(PORT3, "/in", "from the far side", TOK3)
-status, body = get(PORT3, "/msg", TOK3)
-check("GET /msg shows what the far side sent",
-      json.loads(body)["msgs"] == ["from the far side"], body[:120])
+# The message endpoints are GONE. They carried the two message queues,
+# and there is one channel now: commands and their results. So the
+# endpoints that carried messages must be gone -- a 404, not a quiet
+# success, because a quiet success would let a stale client think it
+# still works.
+for _path in ("/msg", "/in", "/send"):
+    for _method in ("GET", "POST"):
+        try:
+            if _method == "GET":
+                get(PORT3, _path, TOK3)
+            else:
+                post(PORT3, _path, "should not land", TOK3)
+            check(f"{_method} {_path} is gone", False, "it still answers")
+        except urllib.error.HTTPError as e:
+            check(f"{_method} {_path} is gone", e.code == 404, str(e.code))
 
-# the browser's own POST, read by the far side
-post(PORT3, "/msg", "from the page", TOK3)
-status, body = get(PORT3, "/send", TOK3)
-check("GET /send collects what the browser sent",
-      json.loads(body)["msgs"] == ["from the page"], body[:120])
+# and the command channel still works, both ways
+_seq = post(PORT3, "/cmd", json.dumps({"op": "ls", "args": {}}), TOK3)
+check("POST /cmd with the right token is accepted", _seq[0] == 200,
+      str(_seq[0]))
+_status, _body = get(PORT3, "/cmd", TOK3)
+_cmds = json.loads(_body).get("cmds") or []
+check("GET /cmd gives the browser's command to the far side",
+      len(_cmds) == 1 and _cmds[0].get("op") == "ls", _body[:160])
+check("the command carries a sequence number",
+      isinstance(_cmds[0].get("seq"), int) if _cmds else False,
+      str(_cmds[0].get("seq")) if _cmds else "no command")
 
-status, body = get(PORT3, "/send", TOK3)
-check("outbound queue is drained after one read",
-      json.loads(body)["msgs"] == [], body[:80])
+# the far side answers it
+post(PORT3, "/res", json.dumps({"seq": _cmds[0]["seq"], "op": "ls",
+                                 "ok": True, "data": {"files": []}}),
+     TOK3)
+_status, _body = get(PORT3, "/res", TOK3)
+_results = json.loads(_body).get("results") or []
+check("GET /res gives the answer back to the browser",
+      len(_results) == 1 and _results[0].get("ok") is True, _body[:160])
 
-# the two queues must not bleed into each other
-post(PORT3, "/msg", "browser side", TOK3)
-status, body = get(PORT3, "/msg", TOK3)
-check("the browser's own message is not echoed back to it",
-      json.loads(body)["msgs"] == [], f"leaked: {body[:100]}")
-
+# and the bad token is still refused on the command channel
 for bad in ("lj_wrong", ""):
     try:
-        get(PORT3, "/send", bad)
-        check(f"/send rejects token {bad!r}", False, "accepted")
+        get(PORT3, "/cmd", bad)
+        check(f"/cmd rejects token {bad!r}", False, "accepted")
     except urllib.error.HTTPError as e:
-        check(f"/send rejects token {bad!r}", e.code == 401, str(e.code))
-
-# the dialer's --listen must pick up what the page posted
-d = subprocess.run([PY, "-m", "lj", "dialer",
-                    "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
-                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
-                   timeout=30)
-check("dialer --listen exits 0", d.returncode == 0, d.stdout[-200:])
-post(PORT3, "/msg", "browser says hi", TOK3)
-d = subprocess.run([PY, "-m", "lj", "dialer",
-                    "--target", f"127.0.0.1:{PORT3}", "--token", TOK3,
-                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
-                   timeout=30)
-check("dialer --listen prints the browser's message",
-      "browser says hi" in d.stdout, d.stdout[-200:])
-
-d = subprocess.run([PY, "-m", "lj", "dialer",
-                    "--target", f"127.0.0.1:{PORT3}", "--token", "lj_bad",
-                    "--listen", "--once"], capture_output=True, text=True, errors="replace",
-                   timeout=30)
-check("dialer --listen with a bad token fails", d.returncode == 1)
+        check(f"/cmd rejects token {bad!r}", e.code == 401, str(e.code))
 
 # ------------------------------------------------- the page authenticates
 
@@ -831,8 +813,10 @@ if _url:
     # can be handed over as it stands -- there is nothing to mistype.
     check("the dialer line is filled in too",
           "lj dialer" in _out and _tok in _out, _out[-200:])
-    check("the worker line is filled in too",
-          "lj dialer --worker" in _out and _tok in _out, _out[-200:])
+    # There is ONE line for the far side now, and it has no --worker
+    # on it: the dialer IS the worker.
+    check("the line for the far side has no --worker on it",
+          "--worker" not in _out, _out[-200:])
     check("the line for the far side carries the token in the fragment",
           f"#token={_tok}" in _out, _out[-200:])
     # The URL must carry an address a browser on ANOTHER machine can
@@ -934,55 +918,26 @@ if _up:
 
 print("\n=== 6d. the REPL is a real two-way session ===")
 # Driven as a subprocess with scripted keystrokes, against a real listener.
-# Unit-testing the pieces would not catch the things that actually broke:
-# a prompt colliding with a log line, or /quit not releasing the session.
-_rp = subprocess.Popen(
-    [PY, "-m", "lj", "dialer", "--interactive",
-     "--target", f"127.0.0.1:{PORT}", "--token", TOK, "--poll", "0.3"],
-    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT, text=True, bufsize=1)
-_remember(_rp)
-
-# The page's message is queued BEFORE the REPL starts, so the poller's
-# first tick finds it. Letting the two race made this check flaky --
-# /quit can be handled before the first poll response ever arrives.
-post(PORT, "/msg", "page says hi", TOK)
-time.sleep(0.3)
-_SESSION = ("/help" + chr(10) + "hello from the repl" + chr(10)
-            + "/send via slash" + chr(10) + "/quit" + chr(10))
-try:
-    _rp.stdin.write(_SESSION)
-    _rp.stdin.flush()
-    _rp.stdin.close()
-except (BrokenPipeError, ValueError):
-    pass
-# communicate() flushes stdin, and stdin is already closed -- on Linux
-# that raises ValueError and kills the whole suite. Set stdin to None so
-# communicate() leaves it alone.
-try:
-    _rp.stdin = None
-    _repl_out, _ = _rp.communicate(timeout=40)
-except subprocess.TimeoutExpired:
-    _rp.kill()
-    _rp.stdin = None
-    _repl_out, _ = _rp.communicate()
-
-check("the REPL shows a banner", "interactive" in _repl_out, _repl_out[-120:])
-check("/help prints the command list", "/send T" in _repl_out, _repl_out[-120:])
-check("a typed line is shown as sent", "hello from the repl" in _repl_out)
-check("the /send command line is shown as sent", "via slash" in _repl_out)
-check("an inbound message is shown live", "page says hi" in _repl_out,
-      _repl_out[-160:])
-check("inbound is marked with <--", "<--" in _repl_out)
-check("outbound is marked with -->", "-->" in _repl_out)
-check("messages carry a timestamp", re.search(r"\[\d\d:\d\d:\d\d\]", _repl_out)
-      is not None)
-check("the prompt is on a line of its own", "you >" in _repl_out)
-check("/quit leaves cleanly", "disconnected" in _repl_out, _repl_out[-120:])
-_got = json.loads(get(PORT, "/msg", TOK)[1])
-check("what the REPL sent reached the page",
-      "hello from the repl" in _got.get("msgs", [])
-      and "via slash" in _got.get("msgs", []), str(_got)[:120])
+# The REPL is GONE. It was the messenger's half, and the messenger is
+# gone. The dialer is a worker: it polls, it works, it answers. There
+# is nothing to type into and nothing to read.
+_d = load("lj.dialer")
+check("lj.dialer has no repl()", not hasattr(_d, "repl"),
+      "the REPL is back")
+check("lj.dialer has no collect()", not hasattr(_d, "collect"),
+      "the collector is back")
+check("lj.dialer has no send()", not hasattr(_d, "send"),
+      "the sender is back")
+check("lj.dialer has no read_message()", not hasattr(_d, "read_message"),
+      "the message reader is back")
+_r = subprocess.run([PY, "-m", "lj", "dialer", "--interactive",
+                     "--target", f"127.0.0.1:{PORT}", "--token", TOK],
+                    capture_output=True, text=True, errors="replace", timeout=30)
+check("lj dialer --interactive is refused", _r.returncode != 0,
+      str(_r.returncode))
+check("it says the option is not known", "unrecognized" in
+      (_r.stdout + _r.stderr) or "not recognized" in (_r.stdout + _r.stderr),
+      (_r.stdout + _r.stderr)[-160:])
 
 print("\n=== 6e. the version is consistent ===")
 # This has drifted twice: pyproject said 2.2.0 while the tag said 2.3.0,
@@ -1138,25 +1093,12 @@ if _have_display:
             _s, _b = get(_gport, "/", None)
             check("the GUI's listener serves the page", _s == 200, str(_s))
 
-            # sending through the window reaches the queue the far side
-            # reads
-            _app.msg_var.set("from the window")
-            _app._send()
-            _app._drain()
-            _got = json.loads(get(_gport, "/send", _app.token)[1])
-            check("what the window sends reaches the far side",
-                  "from the window" in _got.get("msgs", []), str(_got)[:100])
-
-            # ...and the window must not then show it as arriving. It
-            # posts to /msg and polls /send -- the same queue -- so
-            # without tracking its own sends it echoes itself.
-            _app._poll()
-            _app._drain()
-            _text = _app.log.get("1.0", "end")
-            check("the window does not show its own message as incoming",
-                  "<- from the window" not in _text, _text[-160:])
-            check("the window does show it as sent",
-                  "-> from the window" in _text, _text[-160:])
+            # the window has no send box: the far side is a worker,
+            # not a messenger
+            check("the window has no send box", not hasattr(_app, "msg_var"),
+                  "the send box is back")
+            check("the window has no _send()", not hasattr(_app, "_send"),
+                  "the send method is back")
 
             # Click the button. Calling _stop() directly would not catch
             # the button being disabled -- it says "Stop" and cannot be
@@ -1526,26 +1468,32 @@ _r = subprocess.run([PY, "-m", "lj", "remote"], capture_output=True,
 check("the dispatcher does not know lj remote",
       "unknown command" in (_r.stderr or ""), (_r.stderr or "")[-120:])
 
-# and the one command has both modes
+# and the one command has ONE mode: the worker. The --worker flag is
+# gone, and it must not come back -- a flag that selects between a
+# worker and a messenger is what this change removed.
 _d = load("lj.dialer")
-check("lj dialer has the worker flag",
-      "--worker" in (_d.build_parser().format_help() or ""),
-      "no --worker in the help")
+_help = _d.build_parser().format_help() or ""
+check("lj dialer has no --worker flag", "--worker" not in _help,
+      "the flag is back")
+for _gone in ("-m", "--message", "--file", "--repeat", "--listen",
+              "--show", "--interactive", "--worker"):
+    check(f"lj dialer has no {_gone} flag", f" {_gone}" not in _help
+          and f", {_gone}" not in _help, "the flag is back")
 
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")
 check("page reads the token from the fragment", "location.hash" in html)
 check("page stores it in a cookie", "document.cookie" in html)
 check("page sends the X-LJ-Token header", "X-LJ-Token" in html)
-check("page has a way to send back", 'id="chatForm"' in html
-      and "method: 'POST'" in html)
+check("page has no chat drawer", 'id="chatForm"' not in html
+      and 'id="chatToggle"' not in html, "the chat is back")
 check("page clears the fragment from the URL",
       "replaceState" in html, "token would stay in the address bar")
 
 # and a page that did NOT set the cookie really is refused -- this is the
 # case the v2.0.0 test missed by setting the cookie by hand
 try:
-    get(PORT3, "/msg")
+    get(PORT3, "/cmd")
     check("a page with no token at all is refused", False, "accepted")
 except urllib.error.HTTPError as e:
     check("a page with no token at all is refused", e.code == 401, str(e.code))
@@ -1592,7 +1540,13 @@ if _readme is not None:
                   + ")")
 
 print("\n" + "=" * 60)
-print(f"{len(PASS)} passed, {len(FAIL)} failed")
+# The skips are part of the total: the README quotes the number of
+# CHECKS, so a summary that says "195 passed" when 196 ran is
+# confusing. The skip is a check this platform cannot run, not a
+# failure and not a pass.
+_total = len(PASS) + len(FAIL) + len(SKIPPED)
+print(f"{_total} checks: {len(PASS)} passed, {len(FAIL)} failed"
+      + (f", {len(SKIPPED)} skipped" if SKIPPED else ""))
 if FAIL:
     for f in FAIL:
         print("  -", f)

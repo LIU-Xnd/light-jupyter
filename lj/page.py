@@ -149,16 +149,6 @@ PAGE = r"""<!doctype html>
   #prompt input { flex: 1; }
   #prompt span { color: var(--dim); }
   .hide { display: none !important; }
-  #chat { position: fixed; right: 0; top: 45px; bottom: 0; width: 340px;
-          background: var(--panel); border-left: 1px solid var(--line);
-          display: flex; flex-direction: column; z-index: 5;
-          box-shadow: -4px 0 14px rgba(0,0,0,.12); }
-  #chatLog { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0;
-             padding: .5rem; font: inherit; white-space: pre-wrap;
-             word-break: break-word; }
-  #chatForm { display: flex; gap: .4rem; padding: .4rem;
-              border-top: 1px solid var(--line); }
-  #chatForm input { flex: 1; min-width: 0; }
   #toast { position: fixed; right: 1rem; bottom: 1rem; padding: .5rem .8rem;
            background: var(--danger); color: #fff; border-radius: 5px;
            max-width: 40rem; opacity: 0; transition: opacity .2s;
@@ -171,22 +161,9 @@ PAGE = r"""<!doctype html>
 <header>
   <b>lj</b>
   <span id="who" class="dim">not connected</span>
-  <button id="chatToggle" title="show the message queue">messages</button>
   <span id="bar">connecting&hellip;</span>
 </header>
 
-<section id="chat" class="hide">
-  <div class="pane-head">
-    <h2>messages</h2>
-    <button id="chatClear">clear</button>
-  </div>
-  <pre id="chatLog"></pre>
-  <form id="chatForm">
-    <input id="chatInput" placeholder="message to the far side" spellcheck="false"
-           autocomplete="off">
-    <button type="submit">send</button>
-  </form>
-</section>
 
 <main>
   <section id="files">
@@ -676,62 +653,9 @@ document.getElementById('prompt').onsubmit = async (e) => {
   await runCommand(line);
 };
 
-// ------------------------------------------------------------- the chat
-// The message queue is still here, and still works the way it always
-// did: the page posts a message, the far side collects it. It is a
-// drawer rather than a pane because the files and the terminal are
-// what this page is for now.
-const chatLog = document.getElementById('chatLog');
-
-async function pollMessages() {
-  try {
-    const r = await fetch('msg', {cache: 'no-store',
-                                  headers: {'X-LJ-Token': token}});
-    if (!r.ok) return;
-    const data = await r.json();
-    for (const m of (data.msgs || [])) {
-      const line = document.createElement('div');
-      line.textContent = m;
-      chatLog.appendChild(line);
-    }
-    if ((data.msgs || []).length) chatLog.scrollTop = chatLog.scrollHeight;
-  } catch (e) {
-    // transient; the next tick retries
-  }
-}
-
-document.getElementById('chatToggle').onclick = () => {
-  const box = document.getElementById('chat');
-  box.classList.toggle('hide');
-  if (!box.classList.contains('hide')) pollMessages();
-};
-document.getElementById('chatClear').onclick = () => { chatLog.textContent = ''; };
-document.getElementById('chatForm').onsubmit = async (e) => {
-  e.preventDefault();
-  const el = document.getElementById('chatInput');
-  const text = el.value.trim();
-  if (!text) return;
-  el.value = '';
-  try {
-    const r = await fetch('msg', {method: 'POST',
-                                  headers: {'X-LJ-Token': token},
-                                  body: text});
-    if (!r.ok) { toast('the message did not go through'); return; }
-    const line = document.createElement('div');
-    line.textContent = '> ' + text;
-    line.className = 'dim';
-    chatLog.appendChild(line);
-  } catch (err) {
-    toast('the message did not go through');
-  }
-};
-
 // ------------------------------------------------------------------ start
 async function tick() {
   await pollResults();
-  if (!document.getElementById('chat').classList.contains('hide')) {
-    await pollMessages();
-  }
   setTimeout(tick, 400);
 }
 
