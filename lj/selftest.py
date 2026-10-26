@@ -57,8 +57,14 @@ def _gui_check_names() -> list:
     quiet drift a self-test is supposed to catch.
     """
     src = (HERE / "selftest.py").read_text(encoding="utf-8")
-    i = src.find('print("\\n=== 6h. the GUI ===")')
-    j = src.find('print("\\n=== 6h2.', i)
+    # The section headings are the anchors, and they move when a
+    # section is added or removed -- so they are found by their TEXT,
+    # not by their number. A number here went stale the moment a
+    # section was renumbered: the function found nothing, the skipped
+    # checks were never recorded, and the count on a headless Linux
+    # came out twenty short.
+    i = src.find("=== 6g. the GUI ===")
+    j = src.find("=== 6h. the launcher", i)
     if i < 0 or j < 0:
         return []
     return re.findall(r'check\("([^"]+)"', src[i:j])
