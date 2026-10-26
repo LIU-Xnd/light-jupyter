@@ -14,16 +14,15 @@ repo/
   lj/                          below it, or the install silently fails
     __init__.py
     listen.py                 lj listen      the side that holds the port
-    remote.py                 lj remote      the far side's worker
     agent.py                     the file and command operations
     wire.py                      the command/result protocol
     page.py                      the browser UI
-    dialer.py                 lj dialer      messages only
+    dialer.py                 lj dialer      the far side
     selftest.py               python -m lj.selftest
     gui.py                    lj gui         the window
 
 machine A  (no inbound port)            machine B  (holds the port)
-  lj remote  --POST /res-------------->  lj listen  :10000
+  lj dialer  --POST /res-------------->  lj listen  :10000
       ^                                    ^
       |                           GET /cmd |  the far side collects work
       +---- GET /cmd ------------- POST /cmd   the browser asks for something
@@ -43,7 +42,7 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 3.1.1)
+  lj listen  (light_jupyter 4.0.0)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
@@ -52,7 +51,7 @@ lj listen
 
   hand this to the sending side:
 
-    lj remote --target http://192.168.77.160:10000 --token lj_FE3FQK8Z...
+    lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 
   ctrl-c to stop
 ```
@@ -69,18 +68,22 @@ person pastes into a browser that is somewhere else.
 **On the machine that cannot be reached** - it dials out:
 
 ```bash
-lj remote --target 192.168.77.160:10000 --token lj_FE3FQK8Z...
+lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 ```
 
 That is the whole setup. The worker polls the listener, and the browser
 can now browse that machine's files and run commands on it. It runs until
 you stop it.
 
+`--worker` makes it the daemon the browser drives. Without it, `lj
+dialer` is a messenger -- one command, two jobs, and the flag is the
+thing that was already different.
+
 **The line the listener prints is what you hand over.** It carries the
 token, so nothing has to be added to it:
 
 ```
-    lj remote 192.168.77.160:10000/#token=lj_FE3FQK8Z...
+    lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...
 ```
 
 The token is in the fragment because that is where the browser's URL
@@ -88,8 +91,8 @@ puts it, and a fragment is never sent to the server. The far side reads
 it out of the target, so `--token` is not needed:
 
 ```bash
-lj remote 192.168.77.160:10000/#token=lj_FE3FQK8Z...   # the token comes along
-lj remote --target 192.168.77.160:10000 --token lj_... # the same, spelled out
+lj dialer --worker 192.168.77.160:10000/#token=lj_FE3FQK8Z...  # the token comes along
+lj dialer --worker --target 192.168.77.160:10000 --token lj_...  # the same, spelled out
 ```
 
 The target may also be given as a positional argument. With no target at
@@ -100,7 +103,7 @@ The far side works inside a root, so a stray path cannot walk the whole
 filesystem:
 
 ```bash
-lj remote --target ... --token ... --root /srv/project
+lj dialer --worker ... --root /srv/project
 ```
 
 `--root` defaults to the current directory.
@@ -136,10 +139,11 @@ prompt.
 | **v2.4.1** | the self-test no longer leaves listeners behind; the REPL section survives Linux. |
 | **v2.5.0** | the version number, the tag and the installed metadata are checked against each other. |
 | **v2.6.0** | the version number, the tag and the installed metadata agree. |
-| **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. `lj remote` is the far side's worker. |
+| **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. |
 | **v3.0.1** | no https: the traffic is plain HTTP, so run it on a network you control. |
 | **v3.1.0** | the target carries the token and may be positional: `lj remote HOST:PORT/#token=lj_...`. |
 | **v3.1.1** | closing the GUI window takes the server down with it, and waits for the port to be free. |
+| **v4.0.0** | `lj remote` and `lj dialer` are one command: `lj dialer --worker` is the far side's worker, and without it `lj dialer` is the messenger. |
 
 ## A window instead of a terminal
 
@@ -213,38 +217,37 @@ does, with buttons.
 | `--regen-token` | mint a new token, discarding the old one |
 | `--print-only` | print the banner and exit |
 
-### `lj remote`
-
-The far side's worker. It polls the listener, does what the browser asks,
-and brings the answers back. It runs until you stop it.
-
-| flag | |
-|---|---|
-| `TARGET` | where the listener is; the same thing as `--target` |
-| `--target IP[:PORT]` | where the listener is; may carry the token as a fragment |
-| `--token TOKEN` | the token; not needed when the target carries it |
-| `--root DIR` | the tree the browser may touch (default: the current directory) |
-| `--interval SEC` | how often to poll (default `1.0`) |
-| `--timeout SEC` | how long a command may run (default `30`) |
-| `--once` | do one poll and exit |
-| `--print-only` | print the banner and exit |
-
 ### `lj dialer`
 
+The far side. One command, two jobs:
+
+- **as the worker** (`--worker`): poll the listener, do what the browser
+  asks, bring the answers back. It runs until you stop it.
+- **as a messenger** (the default): push a message, or collect what the
+  page sends.
+
+They were two commands once (`lj dialer` and `lj remote`), and they had
+the same arguments, the same target format, the same token handling and
+the same "dial out, never accept" shape. The flag is the thing that was
+already different.
+
 | flag | |
 |---|---|
 | `TARGET` | where the listener is; the same thing as `--target` |
 | `--target IP[:PORT]` | where the listener is; may carry the token as a fragment |
 | `--token TOKEN` | the token; not needed when the target carries it |
+| `--worker` | be the far side's worker: poll for work, do it, bring the answers back |
+| `--root DIR` | the tree the browser may touch; implies `--worker` (default: the home directory) |
 | `-m, --message TEXT` | what to send (default: stdin) |
 | `-f, --file PATH` | send a file |
-| `--repeat N`, `--interval SEC` | send repeatedly |
-| `--timeout SEC` | per-request timeout (default `10`) |
+| `--repeat N`, `--interval SEC` | send repeatedly (default: every `5`s) |
+| `--timeout SEC` | per-request timeout (default: `10` for a message, `15` for a worker) |
 | `--show` | read what the browser queued after sending |
 | `--listen` | receive what the browser sends instead of sending |
-| `--once` | with `--listen`, poll once and exit |
+| `--once` | with `--listen`, poll once and exit; with `--worker`, do one poll and exit |
 | `-i, --interactive` | two-way REPL (the default when stdin is a terminal and no message was given) |
 | `--poll SEC` | how often the REPL checks for new messages |
+| `--print-only` | print the banner and exit |
 
 ## The token
 
@@ -266,7 +269,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-185 checks: token properties, target parsing, the HTTP surface, that a wrong
+192 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's and
 the worker's CLIs handle their failure modes, and that no byte-stream/
@@ -334,7 +337,7 @@ python tools/build_linux_binary.py   # -> dist/linux/lj
 ```
 
 ```bash
-./lj remote --target <ip>:<port> --token <token> --root ~/project
+./lj dialer --worker <ip>:<port>/#token=<token> --root ~/project
 ./lj dialer --target <ip>:<port> --token <token> -m 'hello'
 ```
 

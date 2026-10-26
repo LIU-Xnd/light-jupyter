@@ -530,37 +530,65 @@ r = subprocess.run([PY, "-m", "lj", "dialer",
 status, body = get(PORT2, "/msg", TOK2)
 check("dialer reads stdin", json.loads(body)["msgs"] == ["piped text"], body[:120])
 
-# ------------------------------------------------------------ remote CLI
+# -------------------------------------------------------- the worker mode
 
-# The worker takes the same target shapes as the dialer: positional, or
-# --target, and the token in the fragment. The banner's line for the far
-# side is one of those shapes, so it has to work.
-r = subprocess.run([PY, "-m", "lj", "remote",
+# The far side is ONE command now: lj dialer. --worker makes it the
+# daemon the browser drives; without it, it is the messenger. Both take
+# the same target shapes: positional, or --target, and the token in
+# the fragment. The banner's line for the far side is one of those
+# shapes, so it has to work.
+r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
                     f"127.0.0.1:{PORT2}/#token={TOK2}",
                     "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
-check("remote takes a positional target with the token in its fragment",
+check("the worker takes a positional target with the token in its fragment",
       r.returncode == 0, (r.stdout + r.stderr)[-200:])
-check("remote says what it is listening to",
+check("the worker says what it is listening to",
       f"127.0.0.1:{PORT2}" in r.stdout, r.stdout[-200:])
+check("the worker says it is the far side's worker",
+      "worker" in r.stdout, r.stdout[-200:])
 
-r = subprocess.run([PY, "-m", "lj", "remote",
+# --root implies --worker: naming the tree the browser may touch is
+# only meaningful in the worker mode.
+r = subprocess.run([PY, "-m", "lj", "dialer",
+                    f"127.0.0.1:{PORT2}/#token={TOK2}",
+                    "--root", str(tmp), "--once"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("--root implies --worker", r.returncode == 0 and "worker" in r.stdout,
+      (r.stdout + r.stderr)[-200:])
+
+# and the message mode is still the default
+r = subprocess.run([PY, "-m", "lj", "dialer",
+                    f"127.0.0.1:{PORT2}/#token={TOK2}", "-m", "still a messenger"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("without --worker it is still the messenger",
+      r.returncode == 0 and "204" in r.stdout, (r.stdout + r.stderr)[-200:])
+check("the message from the messenger arrived",
+      "still a messenger" in json.loads(get(PORT2, "/msg", TOK2)[1]).get("msgs", []),
+      get(PORT2, "/msg", TOK2)[1][:120])
+
+r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
                     f"127.0.0.1:{PORT2}", "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
-check("remote with no token is refused", r.returncode == 2, str(r.returncode))
+check("the worker with no token is refused", r.returncode == 2, str(r.returncode))
 
-r = subprocess.run([PY, "-m", "lj", "remote"],
+r = subprocess.run([PY, "-m", "lj", "dialer", "--worker"],
                    capture_output=True, text=True, errors="replace", timeout=30)
-check("remote with no target prints the usage", "usage:" in r.stdout,
+check("the worker with no target prints the usage", "usage:" in r.stdout,
       r.stdout[-160:])
 
-r = subprocess.run([PY, "-m", "lj", "remote",
+r = subprocess.run([PY, "-m", "lj", "dialer", "--worker",
                     "127.0.0.1:1", "--target", f"127.0.0.1:{PORT2}",
                     "--token", TOK2, "--root", str(tmp), "--once"],
                    capture_output=True, text=True, errors="replace", timeout=30)
-check("remote with two different targets is refused",
+check("the worker with two different targets is refused",
       r.returncode == 2 and "two different targets" in r.stdout,
       (r.stdout + r.stderr)[-160:])
+
+# there is no second command any more
+r = subprocess.run([PY, "-m", "lj", "remote"],
+                   capture_output=True, text=True, errors="replace", timeout=30)
+check("there is no lj remote any more", r.returncode != 0, str(r.returncode))
 
 # ------------------------------------------------------------- two-way
 
@@ -803,8 +831,8 @@ if _url:
     # can be handed over as it stands -- there is nothing to mistype.
     check("the dialer line is filled in too",
           "lj dialer" in _out and _tok in _out, _out[-200:])
-    check("the remote line is filled in too",
-          "lj remote" in _out and _tok in _out, _out[-200:])
+    check("the worker line is filled in too",
+          "lj dialer --worker" in _out and _tok in _out, _out[-200:])
     check("the line for the far side carries the token in the fragment",
           f"#token={_tok}" in _out, _out[-200:])
     # The URL must carry an address a browser on ANOTHER machine can
@@ -1489,6 +1517,20 @@ _r = subprocess.run([PY, "-m", "lj", "gui", "--nonsense"], capture_output=True,
 check("lj gui with a bad option fails cleanly, not with a TypeError",
       "TypeError" not in (_r.stdout or "") + (_r.stderr or ""),
       ((_r.stdout or "") + (_r.stderr or ""))[-120:])
+
+# The far side is ONE command. The old "lj remote" must be gone, not
+# quietly still working: a second name for the same thing is the thing
+# this change was to remove.
+_r = subprocess.run([PY, "-m", "lj", "remote"], capture_output=True,
+                    text=True, timeout=60, errors="replace")
+check("the dispatcher does not know lj remote",
+      "unknown command" in (_r.stderr or ""), (_r.stderr or "")[-120:])
+
+# and the one command has both modes
+_d = load("lj.dialer")
+check("lj dialer has the worker flag",
+      "--worker" in (_d.build_parser().format_help() or ""),
+      "no --worker in the help")
 
 print("\n=== 7. the page can actually authenticate ===")
 status, html = get(PORT3, "/")

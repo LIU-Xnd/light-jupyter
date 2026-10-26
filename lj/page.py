@@ -737,7 +737,7 @@ async function tick() {
 
 if (grabToken()) {
   setState('connected', false);
-  document.getElementById('who').textContent = 'the far side is polled by lj remote';
+  document.getElementById('who').textContent = 'the far side is polled by lj dialer';
   ls('.');
   tick();
 } else {
