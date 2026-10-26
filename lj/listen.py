@@ -336,6 +336,10 @@ def local_addr() -> str:
     because it is one syscall and does not depend on a tool being
     installed.
     """
+    # The routing answer first: connecting a UDP socket picks the
+    # address the kernel would use to reach the outside, which is the
+    # one the far side can reach. No packet leaves -- UDP is
+    # connectionless, so connecting only sets the route.
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("1.1.1.1", 9))          # discard port; no packets leave
@@ -347,9 +351,23 @@ def local_addr() -> str:
     finally:
         s.close()
 
+    # The interfaces are the fallback: the first non-loopback one.
     for addr in _interface_ipv4s():
         return addr
     return "127.0.0.1"
+
+
+def local_addrs() -> list:
+    """Every IPv4 this machine has, in the system's own order.
+
+    The first one is the one to use: a box can be on several networks
+    at once, and the first non-loopback address is the one on the path
+    out.
+
+    The rest matter too -- for a certificate, which has to be valid
+    for whichever address the far side dials.
+    """
+    return _interface_ipv4s()
 
 
 def _interface_ipv4s() -> list:
@@ -428,9 +446,16 @@ def generate_self_signed(directory: str, host: str = "localhost") -> tuple:
             ips.append(host)
         else:
             names.append(host)
-    _own = local_addr()
-    if _own and _own not in ips and _own not in names:
-        ips.append(_own)
+    # EVERY address this machine has, not just one. A box can be on
+    # more than one network -- a wired one and a wireless one, say --
+    # and which one the far side reaches is decided by the routing
+    # out of this machine, not by anything lj knows. A certificate
+    # that carries only the first one fails on the second with
+    # "IP address mismatch", which reads like the wrong certificate
+    # rather than a missing name.
+    for _own in local_addrs():
+        if _own and _own not in ips and _own not in names:
+            ips.append(_own)
     _hn = socket.gethostname()
     if _hn and _hn not in names:
         names.append(_hn)
