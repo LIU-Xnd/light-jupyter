@@ -42,7 +42,7 @@ lj listen
 ```
 
 ```
-  lj listen  (light_jupyter 3.1.0)
+  lj listen  (light_jupyter 3.1.1)
     listening : 0.0.0.0:10000
     reachable : 192.168.77.160:10000
     token     : lj_FE3FQK8Z...           (loaded from ~/.lj/token)
@@ -138,6 +138,7 @@ prompt.
 | **v3.0.0** | the page is a file manager and a terminal: browse, edit, move, copy, delete, upload and download on the far side, and run commands there with their colour intact. `lj remote` is the far side's worker. |
 | **v3.0.1** | no https: the traffic is plain HTTP, so run it on a network you control. |
 | **v3.1.0** | the target carries the token and may be positional: `lj remote HOST:PORT/#token=lj_...`. |
+| **v3.1.1** | closing the GUI window takes the server down with it, and waits for the port to be free. |
 
 ## A window instead of a terminal
 
@@ -146,6 +147,15 @@ hand to the sender, a log, and a box to type into. It is a view over the
 same server -- the HTTP handling, the token and the queues are
 `lj.listen`'s, imported and driven, not reimplemented. The command line
 still works and nothing here is required to use `lj`.
+
+**Closing the window takes the server down with it.** The listener is a
+thread in the window's own process, so the port would go when the
+process does -- but the window can close while the process lives on, and
+a server left running in that gap keeps the port and answers the *next*
+launch with the old token. That reads exactly like the new one failing.
+So the port is released on the way out: the close button, the end of the
+mainloop, and an exception in a callback all stop the server, and the
+close waits for the port to be free rather than assuming it.
 
 ```bash
 lj gui
@@ -255,7 +265,7 @@ working immediately.
 python -m lj.selftest
 ```
 
-177 checks: token properties, target parsing, the HTTP surface, that a wrong
+185 checks: token properties, target parsing, the HTTP surface, that a wrong
 token is rejected on every path, that the two directions do not bleed into
 each other, that the page can authenticate and send, that the dialer's and
 the worker's CLIs handle their failure modes, and that no byte-stream/

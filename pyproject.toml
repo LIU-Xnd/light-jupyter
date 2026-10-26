@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lj"
-version = "3.1.0"
+version = "3.1.1"
 description = "A file manager and terminal for a machine you cannot reach: one side holds the port, the other dials out"
 readme = "README.md"
 requires-python = ">=3.7"

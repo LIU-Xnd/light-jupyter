@@ -116,22 +116,45 @@ class ListenerThread(threading.Thread):
             self.error = f"{type(e).__name__}: {e}"
             self.events.put(("error", self.error))
 
-    def stop(self):
-        """Ask the server to stop.
+    def stop(self, wait: float = 5.0) -> bool:
+        """Ask the server to stop, and wait until the port is free.
 
         If the worker has not got as far as binding yet, srv is None and
         there is nothing to shut down -- but the worker may be about to
         bind, so it is also told to give up.
+
+        The wait matters. server_close() releases the socket, but the
+        OS can hold the port a moment longer, and SO_REUSEADDR lets a
+        new server bind it while the old one is still finishing. Then
+        the old server keeps answering and the new one never gets a
+        request, which looks like the start silently failed.
+
+        Returns True if the port is free when this returns.
         """
         self._stopping = True
         srv = self.srv
-        if srv is None:
-            return
-        try:
-            srv.shutdown()
-            srv.server_close()
-        except Exception:
-            pass
+        if srv is not None:
+            try:
+                srv.shutdown()          # returns once serve_forever() stopped
+                srv.server_close()      # release the listening socket
+            except Exception:
+                pass
+        return self._wait_port_free(wait)
+
+    def _wait_port_free(self, timeout: float = 5.0) -> bool:
+        """Wait until nothing is listening on our port any more."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            s = socket.socket()
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((self.host, self.port))
+                s.close()
+                return True
+            except OSError:
+                s.close()
+                time.sleep(0.05)
+        return False
 
 
 class App(tk.Tk):
@@ -362,14 +385,17 @@ class App(tk.Tk):
         self._append("stopping ...")
         was_running = bool(self.worker and self.worker.is_alive())
         if self.worker:
-            self.worker.stop()
-            # Wait for the port to be released. The server closes its
-            # socket, but the OS can hold it a moment longer -- and
-            # SO_REUSEADDR lets a new server bind the same port while
-            # the old one is still finishing. Then the old server keeps
-            # answering and the new one never gets a request, which
-            # looks like the start silently failed.
-            self._wait_port_free()
+            # stop() closes the socket and waits for the port to be
+            # free. The wait matters: the OS can hold the port a
+            # moment after the socket is closed, and SO_REUSEADDR lets
+            # a new server bind it while the old one is still
+            # finishing. Then the old server keeps answering and the
+            # new one never gets a request, which looks like the start
+            # silently failed.
+            freed = self.worker.stop()
+            if not freed:
+                self._append(f"port {self.port_var.get()} is still held "
+                             f"by something")
         self._set_button("Start")
         self.copy_btn.configure(state="disabled")
         self.open_btn.configure(state="disabled")
@@ -386,15 +412,20 @@ class App(tk.Tk):
         """Wait until nothing is listening on our port any more.
 
         Returns False if the port is still held when the time runs out.
+
+        The bind is on the ADDRESS the server was told to use, not on
+        loopback: a server bound to "0.0.0.0" is not visible as a
+        loopback bind, so waiting on 127.0.0.1 would report the port
+        as free while it is still held.
         """
-        import socket
         port = int(self.port_var.get())
+        host = self.host_var.get() or "0.0.0.0"
         deadline = time.time() + timeout
         while time.time() < deadline:
             s = socket.socket()
             try:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind(("127.0.0.1", port))
+                s.bind((host, port))
                 s.close()
                 return True
             except OSError:
@@ -481,6 +512,20 @@ class App(tk.Tk):
         self.log.configure(state="disabled")
 
     def _on_close(self):
+        """The window is closing: take the server down with it.
+
+        The server is a thread in this process, so the port would go
+        when the process does -- but the window can close without the
+        process exiting (the mainloop returns, or an exception unwinds
+        past it), and a server left running in that gap keeps the port
+        and answers the NEXT launch with the OLD token. That looks
+        exactly like the new one failing, so the port is released
+        HERE rather than being left to the process.
+
+        The wait is inside stop(): the OS can hold the port a moment
+        after the socket is closed, and a new server that binds it
+        during that window keeps getting the old server's answers.
+        """
         if self.worker:
             self.worker.stop()
         self.destroy()
@@ -493,11 +538,31 @@ def main(argv=None) -> int:
     arguments, so this has to accept them even though the window has no
     options -- a signature of main() with no parameters makes `lj gui`
     fail with a TypeError the moment it is run from an installed copy.
+
+    The server is stopped in a finally, so it goes when the mainloop
+    ends for ANY reason -- the window was closed, the user pressed
+    ctrl-c, or a callback raised. Without that the listener can outlive
+    the window inside a long-lived process, holding the port and
+    answering the next launch with the old token.
     """
     if argv:
         print("lj gui takes no options", file=sys.stderr)
         return 2
-    App().mainloop()
+    app = App()
+    try:
+        app.mainloop()
+    finally:
+        # _on_close already did this for the normal path; doing it again
+        # is harmless and covers the paths that never reached it.
+        try:
+            if app.worker:
+                app.worker.stop()
+        except Exception:
+            pass
+        try:
+            app.destroy()
+        except Exception:
+            pass
     return 0
 
 

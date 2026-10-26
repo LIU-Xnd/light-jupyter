@@ -74,11 +74,48 @@ def _gui_check_names() -> list:
         m = pat.search(src, after)
         return m.start() if m else -1
 
+    # The range stops at the NEXT section, so this section's list does
+    # not swallow the one after it -- each section has its own list,
+    # and the gate skips them all.
     i = _heading("6g. the GUI")
-    j = _heading("6h. the launcher", i)
+    j = _heading("6h. the GUI takes the server down", i)
     if i < 0 or j < 0:
         return []
     return re.findall(r'check\("([^"]+)"', src[i:j])
+
+
+def _gui_exit_check_names() -> list:
+    """The names of the checks in the "the server goes down with it"
+    section.
+
+    Read from the source, like the GUI section's own list: the count
+    has to be a property of the source, not something written down
+    next to it.
+    """
+    src = (HERE / "selftest.py").read_text(encoding="utf-8")
+    i = src.find('print("\\n=== 6h. the GUI takes the server down')
+    j = src.find('print("\\n=== 6i. the launcher', i)
+    if i < 0 or j < 0:
+        return []
+    # These checks are in f-strings, so the plain pattern does not see
+    # them: the name is a format field, not a literal. And each name
+    # is used for TWO modes, so the list has to carry both -- a name
+    # list of two for four checks makes the count short on a headless
+    # machine, and short by exactly the number that is missing.
+    # The name list has to match what actually RUNS, or the count is
+    # off on a headless machine. Two of the three checks run for every
+    # mode; the third -- "the port can be bound after the GUI is
+    # killed" -- only runs in the killed branch, because that is the
+    # only mode where the process is gone and the OS owns the port.
+    names = re.findall(r'check\(f"([^"]*\{_mode\}[^"]*)"', src[i:j])
+    modes = ("close", "mainloop", "killed")
+    out = []
+    for n in names:
+        for m in modes:
+            if "is killed" in n and m != "killed":
+                continue
+            out.append(n.format(_mode=m))
+    return out
 
 
 SKIPPED = []       # the checks this platform could not run
@@ -1159,6 +1196,38 @@ if _have_display:
             _app._stop()
             time.sleep(1.0)
 
+            # Closing the window must release the port, and it must do
+            # so BEFORE the window goes: the server is a thread in this
+            # process, so the port would go with the process -- but the
+            # window can close without the process exiting, and a server
+            # left running in that gap keeps the port and answers the
+            # NEXT launch with the OLD token. That looks exactly like
+            # the new one failing.
+            _app._start()
+            _deadline = time.time() + 25
+            while time.time() < _deadline:
+                _app._drain()
+                if (_app.worker and _app.worker.is_alive()
+                        and _app.worker.srv is not None):
+                    break
+                time.sleep(0.2)
+            _closport = int(_app.port_var.get())
+            # The worker's stop is what releases the port; _on_close
+            # also destroys the window, and the rest of the section
+            # still needs a live one.
+            _app.worker.stop()
+            _s2 = socket.socket()
+            _s2.settimeout(2)
+            try:
+                _s2.connect(("127.0.0.1", _closport))
+                _still = True
+            except OSError:
+                _still = False
+            finally:
+                _s2.close()
+            check("closing the window releases the port", not _still,
+                  "something is still listening")
+
         _app.destroy()
         _root.destroy()
     except Exception as _e:
@@ -1167,7 +1236,188 @@ else:
     for _n in _gui_check_names():
         skip(_n, "no display")
 
-print("\n=== 6h. the launcher opens the window when there is no console ===")
+# The listener is a thread in the GUI's own process, so the port goes
+# when the process does -- normally. The paths that are NOT normal are
+# the ones that matter:
+#
+#   * the window is closed but the process lives on
+#   * the mainloop ends because of an exception
+#
+# In both, a server left running keeps the port and answers the next
+# launch with the OLD token, which reads exactly like the new one
+# failing. So the port has to be released HERE, not left to the
+# process.
+#
+# These run in a child process, because what is being checked is what
+# the port does after the process is gone -- which the parent can only
+# see from outside. It needs a display too: it opens a window of its
+# own.
+print("\n=== 6h. the GUI takes the server down with it ===")
+if _have_display:
+    _GUI_CHILD = """
+import os, sys, time
+sys.path.insert(0, {root!r})
+import lj.gui as G
+
+KEEP = []
+port = int(sys.argv[1])
+mode = sys.argv[2]
+app = G.App()
+app.withdraw()
+app.port_var.set(str(port))
+app.host_var.set("127.0.0.1")
+app._start()
+deadline = time.time() + 25
+while time.time() < deadline:
+    app._drain()
+    if app.worker and app.worker.is_alive() and app.token:
+        break
+    time.sleep(0.2)
+print("LISTENING", flush=True)
+if mode == "close":
+    # The window is closed and the PROCESS LIVES ON. That is the case
+    # that matters: the server is a daemon thread, so it does not keep
+    # the process alive, but it DOES keep the socket open for as long
+    # as the process lives. A server left behind in that gap holds the
+    # port and answers the next launch with the OLD token -- which
+    # reads exactly like the new one failing.
+    #
+    # The reference is kept deliberately: without it the App is
+    # collected, the server object with it, and the socket is closed by
+    # the garbage collector -- which would make this test pass for the
+    # wrong reason.
+    app._on_close()
+    KEEP.append(app.worker)
+    print("CLOSED", flush=True)
+    time.sleep(3.0)
+elif mode == "mainloop":
+    # the mainloop ends because of an exception in a callback
+    app._on_close()
+    raise RuntimeError("boom")
+elif mode == "killed":
+    # the process is killed outright -- no cleanup runs at all. The
+    # OS releases the port when the process dies, but Windows can
+    # leave it in TIME_WAIT, and a port in TIME_WAIT refuses a new
+    # bind for a moment. So this is about the next launch, not about
+    # the port being held.
+    os._exit(9)
+"""
+
+    def _gui_port_free(port, timeout=3.0):
+        """Is the port free?
+
+        The honest way to ask is the OS's own table: is anything
+        LISTENING on this port? A connect is not the answer, because a
+        socket that is bound but not accepting answers a connect with
+        nothing at all -- the connect succeeds and then the read times
+        out, which looks exactly like a firewall drop.
+
+        That is not hypothetical. With the server left running and
+        serve_forever() already returned, the socket was still bound:
+        the connect SUCCEEDED, the read timed out, and the first
+        version of this check -- which read the timeout as "free" --
+        passed while the port was held.
+
+        So: the OS's table. It says LISTEN, the port is held.
+        """
+        import subprocess as _sp
+        _out = _sp.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
+             f"-ErrorAction SilentlyContinue | Measure-Object).Count"],
+            capture_output=True, text=True, errors="replace").stdout.strip()
+        if _out:
+            return _out == "0"
+
+        # No powershell (Linux): fall back to a connect. A refused
+        # connect means free; a connect that succeeds means held.
+        s = socket.socket()
+        s.settimeout(timeout)
+        try:
+            s.connect(("127.0.0.1", port))
+            return False
+        except ConnectionRefusedError:
+            return True
+        except OSError:
+            return False        # a timeout is not a refusal
+        finally:
+            s.close()
+
+    for _mode in ("close", "mainloop", "killed"):
+        _gp = free_port()
+        _src = tmp / f"gui_child_{_mode}.py"
+        _src.write_text(_GUI_CHILD.format(root=str(HERE.parent)),
+                        encoding="utf-8")
+        _c = subprocess.Popen([PY, str(_src), str(_gp), _mode],
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT,
+                               text=True, errors="replace")
+        _remember(_c)
+        # The child announces that it is listening, and (for the
+        # "close" mode) that the window is closed -- and then STAYS
+        # ALIVE. So the port has to be free while the process is still
+        # running: a server left behind in a live process keeps the
+        # port and answers the next launch with the OLD token, which
+        # reads exactly like the new one failing.
+        _seen = ""
+        _deadline = time.time() + 60
+        while time.time() < _deadline:
+            _line = _c.stdout.readline()
+            if not _line:
+                break
+            _seen += _line
+            if "LISTENING" in _seen and (
+                    _mode == "killed" or _mode == "mainloop"
+                    or "CLOSED" in _seen):
+                break
+        _cout = _seen
+        check(f"the GUI child started a listener ({_mode})",
+              "LISTENING" in _cout, _cout[-160:])
+
+        # The port must be free NOW, with the child still running.
+        #
+        # Not "free a moment later": a wait loop turns this check into
+        # a rubber stamp, because the socket is released by the garbage
+        # collector a second or two after the window goes, whatever the
+        # code does. The question is whether the CLOSE released it --
+        # and that is answered the moment the window closes.
+        _free = _gui_port_free(_gp)
+        check(f"the port is free after the GUI exits ({_mode})",
+              _free, "something is still listening on the port")
+
+        if _mode == "killed":
+            # the process is gone, so the port is the OS's business.
+            # What matters is that the NEXT launch can bind it.
+            _c.wait(timeout=20)
+            _rebound = False
+            _deadline = time.time() + 15
+            while time.time() < _deadline:
+                _s = socket.socket()
+                try:
+                    _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    _s.bind(("127.0.0.1", _gp))
+                    _rebound = True
+                    _s.close()
+                    break
+                except OSError:
+                    _s.close()
+                    time.sleep(0.3)
+            check(f"the port can be bound after the GUI is killed ({_mode})",
+                  _rebound, "the port is still held")
+        else:
+            _c.kill()
+            try:
+                _c.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+        # the names above are two per mode, and there are two modes, so
+        # the section has four checks -- the name list has to say so
+        # or the count is short on a headless machine.
+else:
+    for _n in _gui_exit_check_names():
+        skip(_n, "no display")
+
+print("\n=== 6i. the launcher opens the window when there is no console ===")
 # The Start Menu shortcut runs the GUI launcher with no arguments. The
 # launcher is pythonw-based, so it has no console: printing usage goes
 # nowhere and the process exits, which the user sees as "nothing
@@ -1211,7 +1461,7 @@ if sys.platform == "win32":
           "no pythonw.exe next to this python")
     _probe.unlink(missing_ok=True)
 
-print("\n=== 6i. every subcommand takes the dispatcher's calling convention ===")
+print("\n=== 6j. every subcommand takes the dispatcher's calling convention ===")
 # The dispatcher calls run(rest) for every command. A main() that does
 # not accept an argument therefore works from a checkout (where it is
 # called directly) and fails from an installed copy (where it is called
